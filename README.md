@@ -1,109 +1,41 @@
 # ZHC-Installer
 
-ZHC-Installer downloads a ready ZHCASH blockchain Snapshot seed and helps bootstrap a node faster than syncing from block zero.
+ZHC-Installer is a console installer for bootstrapping a ZHCASH node from a ready blockchain Snapshot.
 
-The Snapshot archive is:
+It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallet files, and downloads the matching ZHCASH node release for the current OS.
+
+## What the installer does
+
+1. Detects the standard ZHCASH data directory.
+2. Creates the data directory if it does not exist.
+3. Checks whether a ZHCASH node process is running.
+4. Stops running `zerohour-qt`, `zerohourd`, or `zerohour-cli` before changing blockchain data.
+5. Removes old blockchain data while preserving wallet files.
+6. Downloads `zhcash-node-seed.zip` into the data directory.
+7. Extracts the Snapshot into the data directory.
+8. Verifies that `blocks/` and `chainstate/` exist after extraction.
+9. Downloads the ZHCASH Evolution node release for the current OS.
+
+## Snapshot archive
+
+Snapshot file:
 
 ```text
 zhcash-node-seed.zip
 ```
 
-It contains prepared blockchain data such as:
+The archive contains prepared blockchain data:
 
 ```text
 blocks/
 chainstate/
 ```
 
-After downloading and extracting the Snapshot into the standard ZHCASH data directory, the node only needs to finish the latest delta synchronization from the network.
+The Snapshot is a bootstrap seed. The node still verifies local data and syncs the latest blocks from the network.
 
-## Public Snapshot sources
+## Default data directories
 
-### Mega
-
-```text
-https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg
-```
-
-### Zeroscan direct HTTP
-
-```text
-https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
-```
-
-## Seed downloader
-
-Linux amd64 downloader:
-
-```text
-https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.1.0/zhcash-seed-downloader-linux-amd64
-```
-
-SHA256:
-
-```text
-28e3375c0cbba8367c63cfa155907e70916faa07613f3a296b4b2e102c6db064
-```
-
-Download and run:
-
-```bash
-wget https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.1.0/zhcash-seed-downloader-linux-amd64
-chmod +x zhcash-seed-downloader-linux-amd64
-./zhcash-seed-downloader-linux-amd64
-```
-
-The downloader saves the Snapshot archive next to the executable:
-
-```text
-zhcash-node-seed.zip
-```
-
-If the download is interrupted, run the same command again. The downloader resumes from:
-
-```text
-zhcash-node-seed.zip.part
-```
-
-## Help
-
-Default mode:
-
-```bash
-./zhcash-seed-downloader-linux-amd64
-```
-
-Default source order:
-
-```text
-mega → yandex if configured → zeroscan
-```
-
-Select a source manually:
-
-```bash
-./zhcash-seed-downloader-linux-amd64 --source mega
-./zhcash-seed-downloader-linux-amd64 --source yandex
-./zhcash-seed-downloader-linux-amd64 --source zeroscan
-./zhcash-seed-downloader-linux-amd64 --source auto
-```
-
-Yandex Disk is supported, but its URL is not published in this repository. Official release binaries may include an obfuscated build-time Yandex URL. If you build from source, provide a Yandex public-resource URL through an environment variable:
-
-```bash
-export ZHCASH_YANDEX_SNAPSHOT_URL='https://disk.yandex.ru/d/...'
-./zhcash-seed-downloader-linux-amd64 --source yandex
-```
-
-Start download from zero:
-
-```bash
-./zhcash-seed-downloader-linux-amd64 --force
-```
-
-## Snapshot installation paths
-
-Default ZHCASH data directory:
+The installer uses the same default data directories as the node:
 
 ### Windows
 
@@ -123,22 +55,148 @@ C:\Users\<User>\AppData\Roaming\ZHCASH
 ~/Library/Application Support/ZHCASH
 ```
 
-## Manual Snapshot installation
+## Wallet safety
 
-1. Stop the ZHCASH node.
-2. Back up `wallet.dat`, `wallet/`, or `wallets/`.
-3. Download `zhcash-node-seed.zip`.
-4. Extract the archive into the ZHCASH data directory.
-5. Start the node.
-6. Let the node verify the local data and sync the latest blocks.
+The installer preserves:
 
-Do not delete wallet files when replacing blockchain data.
+```text
+wallet.dat
+wallet/
+wallets/
+*.bak
+```
 
-## Notes
+Old blockchain/index/cache files are removed before Snapshot extraction unless `--no-clean` is used.
 
-- Mega is the default first source.
-- Yandex Disk is used as fallback in `auto` mode when the release binary has a build-time Yandex URL or when `ZHCASH_YANDEX_SNAPSHOT_URL` is set.
-- Zeroscan direct HTTP is used as the final fallback in `auto` mode.
-- Zeroscan direct HTTP supports `Content-Length` and `Accept-Ranges`, so interrupted downloads can be resumed.
-- The Snapshot is a bootstrap seed. It does not replace normal node verification.
-- Obfuscation prevents casual extraction with tools like `strings`, but it is not a cryptographic secret once the binary is public.
+## Snapshot sources
+
+Default source order:
+
+```text
+mega → yandex if configured → zeroscan
+```
+
+### Mega
+
+```text
+https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg
+```
+
+### Zeroscan direct HTTP
+
+```text
+https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
+```
+
+Yandex Disk is supported, but its URL is not published in this repository. Official release binaries may include an obfuscated build-time Yandex URL. If you build from source, provide a Yandex public-resource URL through:
+
+```bash
+export ZHCASH_YANDEX_SNAPSHOT_URL='https://disk.yandex.ru/d/...'
+```
+
+## Node release installation
+
+The installer uses ZHCASH Evolution `v1.0.0`:
+
+```text
+https://github.com/zerohourcash/zerohourcash/releases/tag/v1.0.0
+```
+
+### Windows
+
+Downloads the Windows release ZIP into a temporary directory, extracts only:
+
+```text
+zerohour-qt.exe
+```
+
+and copies it to the Desktop.
+
+The release ZIP is not left on the Desktop.
+
+### Linux
+
+Downloads and extracts:
+
+```text
+zhcash-evolution-1.0.0-linux-x86_64.tar.gz
+```
+
+into the directory where the installer is run from, unless `--node-dir` is provided.
+
+### macOS
+
+The macOS node package is not available in `v1.0.0` yet. The installer installs the Snapshot and prints a message that the macOS node release will be added later.
+
+## Downloads
+
+Latest release:
+
+```text
+https://github.com/zerohourcash/ZHC-Installer/releases
+```
+
+## Help
+
+Default install:
+
+```bash
+./zhc-installer-linux-amd64
+```
+
+Choose Snapshot source:
+
+```bash
+./zhc-installer-linux-amd64 --source auto
+./zhc-installer-linux-amd64 --source mega
+./zhc-installer-linux-amd64 --source yandex
+./zhc-installer-linux-amd64 --source zeroscan
+```
+
+Start downloads from zero:
+
+```bash
+./zhc-installer-linux-amd64 --force
+```
+
+Use custom paths:
+
+```bash
+./zhc-installer-linux-amd64 --datadir /path/to/ZHCASH/data --node-dir /path/to/node/release
+```
+
+Skip parts:
+
+```bash
+./zhc-installer-linux-amd64 --skip-node
+./zhc-installer-linux-amd64 --skip-snapshot
+```
+
+Do not remove old blockchain data before extraction:
+
+```bash
+./zhc-installer-linux-amd64 --no-clean
+```
+
+By default, the installer waits for Enter before closing on all platforms. Disable this for scripts:
+
+```bash
+./zhc-installer-linux-amd64 --no-wait-on-exit
+```
+
+## Build from source
+
+```bash
+go test ./...
+go build -trimpath -ldflags="-s -w" -o zhc-installer-linux-amd64 .
+```
+
+Cross-build examples:
+
+```bash
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-windows-amd64.exe .
+GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-linux-amd64 .
+GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-darwin-amd64 .
+```
+
+Obfuscation prevents casual extraction with tools like `strings`, but it is not a cryptographic secret once a binary is public.

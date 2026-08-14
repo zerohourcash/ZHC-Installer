@@ -1,7 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -15,7 +18,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -24,9 +29,12 @@ const defaultMegaLink = "https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-F
 const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-seed.zip"
 const defaultOutputName = "zhcash-node-seed.zip"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
+const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
+const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
 
 var yandexURLPayload string
 var yandexURLKey string
+var waitAtExit = true
 
 type sourceKind string
 
@@ -55,53 +63,109 @@ type megaFileInfo struct {
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "\nERROR: %v\n", err)
+		if waitAtExit {
+			waitForEnter()
+		}
 		os.Exit(1)
+	}
+	if waitAtExit {
+		waitForEnter()
 	}
 }
 
 func run() error {
 	sourceFlag := flag.String("source", "auto", "download source: auto, mega, yandex, or zeroscan")
 	force := flag.Bool("force", false, "delete existing output/partial file and start over")
-	flag.Parse()
-
+	skipNode := flag.Bool("skip-node", false, "skip ZHCASH node release download")
+	skipSnapshot := flag.Bool("skip-snapshot", false, "skip Snapshot download and extraction")
+	noClean := flag.Bool("no-clean", false, "do not clean old blockchain data before extracting Snapshot")
+	waitOnExit := flag.Bool("wait-on-exit", true, "wait for Enter before exiting")
+	noWaitOnExit := flag.Bool("no-wait-on-exit", false, "do not wait for Enter before exiting")
+	env := getenvMap()
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	baseDir := filepath.Dir(exe)
-	outputPath := filepath.Join(baseDir, defaultOutputName)
-	partPath := outputPath + ".part"
+	runDir := filepath.Dir(exe)
+	defaultDatadir, err := defaultDataDir(runtime.GOOS, env)
+	if err != nil {
+		defaultDatadir = ""
+	}
+	defaultNodedir, err := defaultNodeDir(runtime.GOOS, env, runDir)
+	if err != nil {
+		defaultNodedir = runDir
+	}
+	dataDir := flag.String("datadir", defaultDatadir, "ZHCASH data directory")
+	nodeDir := flag.String("node-dir", defaultNodedir, "node release install/download directory")
+	flag.Parse()
+	waitAtExit = *waitOnExit && !*noWaitOnExit
 
 	sources, err := resolveSources(*sourceFlag)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("ZHCASH seed downloader")
-	fmt.Println("Directory:", baseDir)
-	fmt.Println("Output:", outputPath)
+	fmt.Println("ZHCASH Installer")
+	fmt.Println("OS:", runtime.GOOS+"/"+runtime.GOARCH)
+	fmt.Println("Data directory:", *dataDir)
+	fmt.Println("Node directory:", *nodeDir)
 	fmt.Println("Source mode:", *sourceFlag)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
 	defer cancel()
 
-	if *force {
-		_ = os.Remove(outputPath)
-		_ = os.Remove(partPath)
+	if err := stopRunningNodes(runtime.GOOS); err != nil {
+		return err
 	}
 
-	var failures []string
-	for _, source := range sources {
-		fmt.Println()
-		fmt.Println("==> Source:", source.Name)
-		if err := downloadFromSource(ctx, source, outputPath, partPath); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", source.Name, err))
-			fmt.Println("Source failed:", err)
-			continue
-		}
-		return nil
+	if *dataDir == "" {
+		return errors.New("data directory is empty; pass --datadir")
 	}
-	return fmt.Errorf("all sources failed: %s", strings.Join(failures, "; "))
+	if *nodeDir == "" {
+		return errors.New("node directory is empty; pass --node-dir")
+	}
+	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(*nodeDir, 0o755); err != nil {
+		return err
+	}
+
+	if !*skipSnapshot {
+		if !*noClean {
+			fmt.Println()
+			fmt.Println("==> CLEAN BLOCKCHAIN DATA")
+			removed, err := cleanBlockchainData(*dataDir)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Removed %d old blockchain entries; wallet files were preserved.\n", removed)
+		}
+		snapshotPath, err := downloadSnapshot(ctx, sources, *dataDir, *force)
+		if err != nil {
+			return err
+		}
+		fmt.Println()
+		fmt.Println("==> EXTRACT SNAPSHOT")
+		fmt.Println("Archive:", snapshotPath)
+		if err := extractZipArchive(snapshotPath, *dataDir); err != nil {
+			return err
+		}
+		if err := verifySnapshotLayout(*dataDir); err != nil {
+			return err
+		}
+		fmt.Println("Snapshot extracted and verified.")
+	}
+
+	if !*skipNode {
+		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir); err != nil {
+			return err
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("Finished.")
+	return nil
 }
 
 func resolveSources(mode string) ([]sourceConfig, error) {
@@ -123,6 +187,330 @@ func resolveSources(mode string) ([]sourceConfig, error) {
 	default:
 		return nil, fmt.Errorf("unknown source %q; use auto, mega, yandex, or zeroscan", mode)
 	}
+}
+
+func defaultDataDir(goos string, env map[string]string) (string, error) {
+	switch goos {
+	case "windows":
+		if env["APPDATA"] == "" {
+			return "", errors.New("APPDATA is not set")
+		}
+		return filepath.Join(env["APPDATA"], "ZHCASH"), nil
+	case "darwin":
+		if env["HOME"] == "" {
+			return "", errors.New("HOME is not set")
+		}
+		return filepath.Join(env["HOME"], "Library", "Application Support", "ZHCASH"), nil
+	default:
+		if env["HOME"] == "" {
+			return "", errors.New("HOME is not set")
+		}
+		return filepath.Join(env["HOME"], ".zerohour"), nil
+	}
+}
+
+func waitForEnter() {
+	fmt.Println()
+	fmt.Print("Press Enter to exit...")
+	_, _ = fmt.Scanln()
+}
+
+func nodeProcessNames(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{"zerohour-qt.exe", "zerohourd.exe", "zerohour-cli.exe"}
+	default:
+		return []string{"zerohour-qt", "zerohourd", "zerohour-cli"}
+	}
+}
+
+func stopRunningNodes(goos string) error {
+	names := nodeProcessNames(goos)
+	fmt.Println("Checking running ZHCASH node processes...")
+	for _, name := range names {
+		running, err := isProcessRunning(goos, name)
+		if err != nil {
+			fmt.Printf("Warning: could not check process %s: %v\n", name, err)
+			continue
+		}
+		if !running {
+			continue
+		}
+		fmt.Println("Stopping running process:", name)
+		if err := terminateProcess(goos, name); err != nil {
+			return err
+		}
+		for i := 0; i < 10; i++ {
+			time.Sleep(time.Second)
+			stillRunning, err := isProcessRunning(goos, name)
+			if err != nil {
+				return err
+			}
+			if !stillRunning {
+				fmt.Println("Stopped:", name)
+				break
+			}
+			if i == 9 {
+				return fmt.Errorf("%s is still running; close it manually and run installer again", name)
+			}
+		}
+	}
+	return nil
+}
+
+func isProcessRunning(goos string, name string) (bool, error) {
+	var cmd *exec.Cmd
+	if goos == "windows" {
+		cmd = exec.Command("tasklist", "/FI", "IMAGENAME eq "+name)
+	} else {
+		cmd = exec.Command("pgrep", "-x", name)
+	}
+	output, err := cmd.CombinedOutput()
+	if goos == "windows" {
+		if err != nil {
+			return false, err
+		}
+		return strings.Contains(strings.ToLower(string(output)), strings.ToLower(name)), nil
+	}
+	if err == nil {
+		return strings.TrimSpace(string(output)) != "", nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+func terminateProcess(goos string, name string) error {
+	var cmd *exec.Cmd
+	if goos == "windows" {
+		cmd = exec.Command("taskkill", "/IM", name, "/T", "/F")
+	} else {
+		cmd = exec.Command("pkill", "-TERM", "-x", name)
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop %s: %w\n%s", name, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func defaultNodeDir(goos string, env map[string]string, runDir string) (string, error) {
+	switch goos {
+	case "windows":
+		home := env["USERPROFILE"]
+		if home == "" {
+			home = env["HOME"]
+		}
+		if home == "" {
+			return "", errors.New("USERPROFILE is not set")
+		}
+		return filepath.Join(home, "Desktop"), nil
+	default:
+		return runDir, nil
+	}
+}
+
+func getenvMap() map[string]string {
+	out := make(map[string]string)
+	for _, item := range os.Environ() {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func cleanBlockchainData(dataDir string) (int, error) {
+	clean, err := filepath.Abs(dataDir)
+	if err != nil {
+		return 0, err
+	}
+	if isDangerousPath(clean) {
+		return 0, fmt.Errorf("refusing to clean dangerous data directory: %s", dataDir)
+	}
+	if err := os.MkdirAll(clean, 0o755); err != nil {
+		return 0, err
+	}
+	entries, err := os.ReadDir(clean)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, entry := range entries {
+		if preserveDataEntry(entry.Name(), entry.IsDir()) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(clean, entry.Name())); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+func preserveDataEntry(name string, isDir bool) bool {
+	lower := strings.ToLower(name)
+	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak")) {
+		return true
+	}
+	if isDir && (lower == "wallet" || lower == "wallets") {
+		return true
+	}
+	return false
+}
+
+func isDangerousPath(path string) bool {
+	volume := filepath.VolumeName(path)
+	withoutVolume := strings.TrimPrefix(path, volume)
+	if withoutVolume == string(filepath.Separator) || withoutVolume == "." || withoutVolume == "" {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(path))
+	return base == "" || base == "." || base == string(filepath.Separator)
+}
+
+func extractZipArchive(zipPath string, destination string) error {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	for _, item := range reader.File {
+		target, err := safeJoin(destination, item.Name)
+		if err != nil {
+			return err
+		}
+		if item.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		src, err := item.Open()
+		if err != nil {
+			return err
+		}
+		if err := writeFileFromReader(target, src, item.FileInfo().Mode()); err != nil {
+			_ = src.Close()
+			return err
+		}
+		if err := src.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func extractSingleFileFromZip(zipPath string, filename string, destination string) (string, error) {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+
+	for _, item := range reader.File {
+		if item.FileInfo().IsDir() || !strings.EqualFold(filepath.Base(item.Name), filename) {
+			continue
+		}
+		target, err := safeJoin(destination, filename)
+		if err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return "", err
+		}
+		src, err := item.Open()
+		if err != nil {
+			return "", err
+		}
+		mode := item.FileInfo().Mode()
+		if mode == 0 {
+			mode = 0o755
+		}
+		if err := writeFileFromReader(target, src, mode|0o755); err != nil {
+			_ = src.Close()
+			return "", err
+		}
+		if err := src.Close(); err != nil {
+			return "", err
+		}
+		return target, nil
+	}
+	return "", fmt.Errorf("%s not found in %s", filename, zipPath)
+}
+
+func extractTarGzArchive(archivePath string, destination string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		target, err := safeJoin(destination, header.Name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := writeFileFromReader(target, tr, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func safeJoin(root string, child string) (string, error) {
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	target, err := filepath.Abs(filepath.Join(cleanRoot, child))
+	if err != nil {
+		return "", err
+	}
+	if target != cleanRoot && !strings.HasPrefix(target, cleanRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry escapes destination: %s", child)
+	}
+	return target, nil
+}
+
+func writeFileFromReader(path string, reader io.Reader, mode os.FileMode) error {
+	if mode == 0 {
+		mode = 0o644
+	}
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, reader)
+	return err
 }
 
 func configuredYandexURL() string {
@@ -177,6 +565,84 @@ func downloadFromSource(ctx context.Context, source sourceConfig, outputPath str
 	}
 }
 
+func downloadSnapshot(ctx context.Context, sources []sourceConfig, dataDir string, force bool) (string, error) {
+	outputPath := filepath.Join(dataDir, defaultOutputName)
+	if force {
+		_ = os.Remove(outputPath)
+		for _, source := range sources {
+			_ = os.Remove(snapshotPartPath(outputPath, source.Name))
+		}
+	}
+	var failures []string
+	for _, source := range sources {
+		partPath := snapshotPartPath(outputPath, source.Name)
+		fmt.Println()
+		fmt.Println("==> DOWNLOAD SNAPSHOT FROM", strings.ToUpper(source.Name))
+		if err := downloadFromSource(ctx, source, outputPath, partPath); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", source.Name, err))
+			fmt.Println("Source failed:", err)
+			continue
+		}
+		return outputPath, nil
+	}
+	return "", fmt.Errorf("all snapshot sources failed: %s", strings.Join(failures, "; "))
+}
+
+func snapshotPartPath(outputPath string, sourceName string) string {
+	return outputPath + "." + sourceName + ".part"
+}
+
+func verifySnapshotLayout(dataDir string) error {
+	for _, required := range []string{"blocks", "chainstate"} {
+		info, err := os.Stat(filepath.Join(dataDir, required))
+		if err != nil {
+			return fmt.Errorf("snapshot missing %s: %w", required, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("snapshot path is not a directory: %s", required)
+		}
+	}
+	return nil
+}
+
+func installNodeRelease(ctx context.Context, goos string, nodeDir string) error {
+	fmt.Println()
+	fmt.Println("==> INSTALL NODE RELEASE")
+	switch goos {
+	case "windows":
+		tempDir, err := os.MkdirTemp("", "zhcash-node-release-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tempDir)
+		archive := filepath.Join(tempDir, "zhcash-evolution-1.0.0-win64.zip")
+		if err := downloadPlainHTTPFile(ctx, windowsNodeURL, archive, archive+".part"); err != nil {
+			return err
+		}
+		target, err := extractSingleFileFromZip(archive, "zerohour-qt.exe", nodeDir)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Windows node installed:", target)
+		return nil
+	case "linux":
+		archive := filepath.Join(nodeDir, "zhcash-evolution-1.0.0-linux-x86_64.tar.gz")
+		if err := downloadPlainHTTPFile(ctx, linuxNodeURL, archive, archive+".part"); err != nil {
+			return err
+		}
+		if err := extractTarGzArchive(archive, nodeDir); err != nil {
+			return err
+		}
+		fmt.Println("Linux node release extracted to:", nodeDir)
+		return nil
+	case "darwin":
+		fmt.Println("macOS node package is not available in ZHCASH v1.0.0 yet. Snapshot installation completed; macOS node release will be added later.")
+		return nil
+	default:
+		return fmt.Errorf("unsupported OS for node release: %s", goos)
+	}
+}
+
 func downloadMega(ctx context.Context, megaLink string, outputPath string, partPath string) error {
 	fileID, fileKey, err := parseMegaLink(megaLink)
 	if err != nil {
@@ -212,6 +678,10 @@ func finalizeDownloadedPart(outputPath string, partPath string) error {
 	if err := verifyZipHeader(partPath); err != nil {
 		return err
 	}
+	return renameDownloadedPart(outputPath, partPath)
+}
+
+func renameDownloadedPart(outputPath string, partPath string) error {
 	if err := os.Rename(partPath, outputPath); err != nil {
 		return err
 	}
@@ -384,12 +854,27 @@ func resumeOffset(partPath string, targetSize int64) (int64, error) {
 }
 
 func downloadPlainHTTP(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64) error {
+	if err := downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size); err != nil {
+		return err
+	}
+	return verifyZipHeader(outputPath)
+}
+
+func downloadPlainHTTPFile(ctx context.Context, sourceURL string, outputPath string, partPath string) error {
+	size, err := requestHTTPContentLength(ctx, sourceURL)
+	if err != nil {
+		return err
+	}
+	return downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size)
+}
+
+func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64) error {
 	fmt.Println("Size:", humanBytes(size))
 	if complete, err := existingComplete(outputPath, size); err != nil {
 		return err
 	} else if complete {
 		fmt.Println("File already exists and has expected size.")
-		return verifyZipHeader(outputPath)
+		return nil
 	}
 	offset, err := resumeOffset(partPath, size)
 	if err != nil {
@@ -438,7 +923,7 @@ func downloadPlainHTTP(ctx context.Context, sourceURL string, outputPath string,
 	if stat.Size() != size {
 		return fmt.Errorf("downloaded size mismatch: got %s, expected %s; re-run to resume", humanBytes(stat.Size()), humanBytes(size))
 	}
-	return finalizeDownloadedPart(outputPath, partPath)
+	return renameDownloadedPart(outputPath, partPath)
 }
 
 func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCryptoParams, outputPath string, offset int64, targetSize int64) error {
