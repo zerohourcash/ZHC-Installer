@@ -36,7 +36,7 @@ https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
 Linux amd64 downloader:
 
 ```text
-http://95.133.236.37:8080/installer/zhcash-seed-downloader-linux-amd64
+https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.1.0/zhcash-seed-downloader-linux-amd64
 ```
 
 SHA256:
@@ -48,7 +48,7 @@ SHA256:
 Download and run:
 
 ```bash
-wget http://95.133.236.37:8080/installer/zhcash-seed-downloader-linux-amd64
+wget https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.1.0/zhcash-seed-downloader-linux-amd64
 chmod +x zhcash-seed-downloader-linux-amd64
 ./zhcash-seed-downloader-linux-amd64
 ```
