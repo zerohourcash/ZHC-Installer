@@ -58,7 +58,7 @@ func TestResolveSourcesAutoOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sourceNames(sources); !bytes.Equal([]byte(got), []byte("yandex,mega,zeroscan")) {
+	if got := sourceNames(sources); !bytes.Equal([]byte(got), []byte("yandex,mega,github,zeroscan")) {
 		t.Fatalf("unexpected auto source order: %s", got)
 	}
 }
@@ -112,6 +112,19 @@ func TestConfiguredYandexURLFallsBackToEnvironment(t *testing.T) {
 func TestResolveSourcesRejectsUnknownSource(t *testing.T) {
 	if _, err := resolveSources("unknown"); err == nil {
 		t.Fatal("expected unknown source to be rejected")
+	}
+}
+
+func TestGithubSnapshotPartURLs(t *testing.T) {
+	urls := githubSnapshotPartURLs()
+	if len(urls) != 10 {
+		t.Fatalf("unexpected github part count: %d", len(urls))
+	}
+	if !strings.HasSuffix(urls[0], "/zhcash-node-seed.zip.part01") {
+		t.Fatalf("unexpected first github part URL: %s", urls[0])
+	}
+	if !strings.HasSuffix(urls[9], "/zhcash-node-seed.zip.part10") {
+		t.Fatalf("unexpected last github part URL: %s", urls[9])
 	}
 }
 

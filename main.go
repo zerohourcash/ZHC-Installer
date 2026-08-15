@@ -29,6 +29,8 @@ import (
 )
 
 const defaultMegaLink = "https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg"
+const defaultGithubReleaseBaseURL = "https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.2.2"
+const defaultGithubPartCount = 10
 const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-seed.zip"
 const defaultOutputName = "zhcash-node-seed.zip"
 const snapshotSHA256 = "20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7"
@@ -47,6 +49,7 @@ type sourceKind string
 const (
 	sourceMega     sourceKind = "mega"
 	sourceYandex   sourceKind = "yandex"
+	sourceGithub   sourceKind = "github"
 	sourceZeroscan sourceKind = "zeroscan"
 )
 
@@ -80,7 +83,7 @@ func main() {
 }
 
 func run() error {
-	sourceFlag := flag.String("source", "auto", "download source: auto, mega, yandex, or zeroscan")
+	sourceFlag := flag.String("source", "auto", "download source: auto, yandex, mega, github, or zeroscan")
 	force := flag.Bool("force", false, "delete existing output/partial file and start over")
 	skipNode := flag.Bool("skip-node", false, "skip ZHCASH node release download")
 	skipSnapshot := flag.Bool("skip-snapshot", false, "skip Snapshot download and extraction")
@@ -181,6 +184,7 @@ func resolveSources(mode string) ([]sourceConfig, error) {
 	all := []sourceConfig{
 		yandex,
 		{Name: "mega", Kind: sourceMega, URL: defaultMegaLink},
+		{Name: "github", Kind: sourceGithub, URL: defaultGithubReleaseBaseURL},
 		{Name: "zeroscan", Kind: sourceZeroscan, URL: defaultZeroscanURL},
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -190,10 +194,12 @@ func resolveSources(mode string) ([]sourceConfig, error) {
 		return []sourceConfig{all[1]}, nil
 	case "yandex", "ya", "яндекс":
 		return []sourceConfig{all[0]}, nil
-	case "zeroscan", "zeroscan.io":
+	case "github", "gh":
 		return []sourceConfig{all[2]}, nil
+	case "zeroscan", "zeroscan.io":
+		return []sourceConfig{all[3]}, nil
 	default:
-		return nil, fmt.Errorf("unknown source %q; use auto, mega, yandex, or zeroscan", mode)
+		return nil, fmt.Errorf("unknown source %q; use auto, yandex, mega, github, or zeroscan", mode)
 	}
 }
 
@@ -562,6 +568,8 @@ func downloadFromSource(ctx context.Context, source sourceConfig, outputPath str
 			return err
 		}
 		return downloadPlainHTTP(ctx, info.DownloadURL, outputPath, partPath, info.Size, idleTimeout)
+	case sourceGithub:
+		return downloadMultipartHTTP(ctx, githubSnapshotPartURLs(), outputPath, partPath, idleTimeout)
 	case sourceZeroscan:
 		size, err := requestHTTPContentLength(ctx, source.URL)
 		if err != nil {
@@ -571,6 +579,14 @@ func downloadFromSource(ctx context.Context, source sourceConfig, outputPath str
 	default:
 		return fmt.Errorf("unsupported source kind: %s", source.Kind)
 	}
+}
+
+func githubSnapshotPartURLs() []string {
+	urls := make([]string, defaultGithubPartCount)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("%s/%s.part%02d", defaultGithubReleaseBaseURL, defaultOutputName, i+1)
+	}
+	return urls
 }
 
 func downloadSnapshot(ctx context.Context, sources []sourceConfig, dataDir string, force bool, idleTimeout time.Duration, sourceRetries int) (string, error) {
@@ -948,6 +964,9 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("download HTTP status: %s", resp.Status)
 	}
+	if offset > 0 && resp.StatusCode != http.StatusPartialContent {
+		return errors.New("server ignored Range resume request")
+	}
 
 	progress := &progressReader{
 		reader:     resp.Body,
@@ -973,6 +992,120 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 		return fmt.Errorf("downloaded size mismatch: got %s, expected %s; re-run to resume", humanBytes(stat.Size()), humanBytes(size))
 	}
 	return renameDownloadedPart(outputPath, partPath)
+}
+
+func downloadMultipartHTTP(ctx context.Context, partURLs []string, outputPath string, partPath string, idleTimeout time.Duration) error {
+	if len(partURLs) == 0 {
+		return errors.New("multipart source has no parts")
+	}
+	partSizes := make([]int64, len(partURLs))
+	totalSize := int64(0)
+	for i, partURL := range partURLs {
+		size, err := requestHTTPContentLength(ctx, partURL)
+		if err != nil {
+			return fmt.Errorf("part %02d size: %w", i+1, err)
+		}
+		partSizes[i] = size
+		totalSize += size
+	}
+	fmt.Printf("Parts: %d\n", len(partURLs))
+	fmt.Println("Size:", humanBytes(totalSize))
+	if complete, err := existingComplete(outputPath, totalSize); err != nil {
+		return err
+	} else if complete {
+		fmt.Println("File already exists and has expected size.")
+		return verifyZipHeader(outputPath)
+	}
+	offset, err := resumeOffset(partPath, totalSize)
+	if err != nil {
+		return err
+	}
+
+	partStart := int64(0)
+	for i, partURL := range partURLs {
+		partSize := partSizes[i]
+		partEnd := partStart + partSize
+		if offset >= partEnd {
+			partStart = partEnd
+			continue
+		}
+		partOffset := int64(0)
+		if offset > partStart {
+			partOffset = offset - partStart
+		}
+		fmt.Printf("GitHub part %02d/%02d\n", i+1, len(partURLs))
+		if err := appendHTTPRangeToFile(ctx, partURL, partPath, partOffset, partSize, partStart, totalSize, idleTimeout); err != nil {
+			return fmt.Errorf("part %02d: %w", i+1, err)
+		}
+		offset = partEnd
+		partStart = partEnd
+	}
+
+	stat, err := os.Stat(partPath)
+	if err != nil {
+		return err
+	}
+	if stat.Size() != totalSize {
+		return fmt.Errorf("multipart downloaded size mismatch: got %s, expected %s; re-run to resume", humanBytes(stat.Size()), humanBytes(totalSize))
+	}
+	if err := verifyZipHeader(partPath); err != nil {
+		return err
+	}
+	return renameDownloadedPart(outputPath, partPath)
+}
+
+func appendHTTPRangeToFile(ctx context.Context, sourceURL string, outputPath string, offset int64, size int64, globalOffset int64, totalSize int64, idleTimeout time.Duration) error {
+	out, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := out.Seek(globalOffset+offset, io.SeekStart); err != nil {
+		return err
+	}
+
+	downloadCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	watchdog := newIdleWatchdog(idleTimeout, cancel)
+	defer watchdog.stop()
+
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, size-1))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("download HTTP status: %s", resp.Status)
+	}
+	if offset > 0 && resp.StatusCode != http.StatusPartialContent {
+		return errors.New("server ignored Range resume request")
+	}
+
+	progress := &progressReader{
+		reader:     resp.Body,
+		start:      time.Now(),
+		last:       time.Now(),
+		offset:     globalOffset + offset,
+		total:      totalSize,
+		onProgress: watchdog.progress,
+	}
+	written, err := io.Copy(out, progress)
+	if err != nil {
+		if errors.Is(context.Cause(downloadCtx), errIdleTimeout) {
+			return fmt.Errorf("%w after %s without progress", errIdleTimeout, idleTimeout)
+		}
+		return err
+	}
+	if written != size-offset {
+		return fmt.Errorf("part size mismatch: got %s, expected %s", humanBytes(written), humanBytes(size-offset))
+	}
+	fmt.Println()
+	return nil
 }
 
 func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCryptoParams, outputPath string, offset int64, targetSize int64, idleTimeout time.Duration) error {

@@ -73,7 +73,7 @@ Old blockchain/index/cache files are removed before Snapshot extraction unless `
 Default source order:
 
 ```text
-yandex if configured → mega → zeroscan
+yandex if configured → mega → github multipart → zeroscan
 ```
 
 All mirrors use one shared partial file:
@@ -101,6 +101,18 @@ https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg
 ```text
 https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
 ```
+
+### GitHub multipart fallback
+
+GitHub Releases cannot store this Snapshot as one file because every release asset must be under 2 GiB. The installer supports the Snapshot split into 10 release assets:
+
+```text
+zhcash-node-seed.zip.part01
+...
+zhcash-node-seed.zip.part10
+```
+
+The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256.
 
 Yandex Disk is supported, but its URL is not published in this repository. Official release binaries may include an obfuscated build-time Yandex URL. If you build from source, provide a Yandex public-resource URL through:
 
@@ -164,6 +176,7 @@ Choose Snapshot source:
 ./zhc-installer-linux-amd64 --source auto
 ./zhc-installer-linux-amd64 --source mega
 ./zhc-installer-linux-amd64 --source yandex
+./zhc-installer-linux-amd64 --source github
 ./zhc-installer-linux-amd64 --source zeroscan
 ```
 
