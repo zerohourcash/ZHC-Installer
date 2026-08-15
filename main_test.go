@@ -266,6 +266,102 @@ func TestVerifySHA256FileRejectsMismatch(t *testing.T) {
 	}
 }
 
+func TestFinalizeCompletePartRenamesFullPart(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "snapshot.zip")
+	part := output + ".part"
+	createZip(t, part, map[string]string{"blocks/blk00000.dat": "block"})
+	stat, err := os.Stat(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done, err := finalizeCompletePart(output, part, stat.Size(), verifyZipHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done {
+		t.Fatal("expected full partial file to be finalized")
+	}
+	if _, err := os.Stat(output); err != nil {
+		t.Fatalf("expected output file after finalize: %v", err)
+	}
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
+		t.Fatal("expected partial file to be renamed away")
+	}
+}
+
+func TestFinalizeCompletePartIgnoresIncompletePart(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "snapshot.zip")
+	part := output + ".part"
+	mustWrite(t, part, "partial")
+
+	done, err := finalizeCompletePart(output, part, 100, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done {
+		t.Fatal("incomplete partial file must not be finalized")
+	}
+}
+
+func TestFinalizeCompletePartTruncatesOversizedPart(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "snapshot.zip")
+	part := output + ".part"
+	createZip(t, part, map[string]string{"blocks/blk00000.dat": "block"})
+	stat, err := os.Stat(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(part, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("extra bytes from failed retry"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	done, err := finalizeCompletePart(output, part, stat.Size(), verifyZipHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done {
+		t.Fatal("expected oversized partial file to be recovered")
+	}
+	outputStat, err := os.Stat(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputStat.Size() != stat.Size() {
+		t.Fatalf("expected truncated size %d, got %d", stat.Size(), outputStat.Size())
+	}
+}
+
+func TestPlainHTTPDownloadFinalizesFullPartWithoutNetwork(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "snapshot.zip")
+	part := output + ".part"
+	createZip(t, part, map[string]string{"blocks/blk00000.dat": "block"})
+	stat, err := os.Stat(part)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = downloadPlainHTTPFileWithSize(context.Background(), "http://127.0.0.1:1/unreachable.zip", output, part, stat.Size(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(output); err != nil {
+		t.Fatalf("expected output file after finalize: %v", err)
+	}
+}
+
 func TestIdleWatchdogCancelsAfterNoProgress(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)

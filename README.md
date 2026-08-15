@@ -104,7 +104,11 @@ https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
 
 ### GitHub multipart fallback
 
-GitHub Releases cannot store this Snapshot as one file because every release asset must be under 2 GiB. The installer supports the Snapshot split into 10 release assets:
+GitHub Releases cannot store this Snapshot as one file because every release asset must be under 2 GiB. The installer supports the Snapshot split into 10 release assets stored in the data release:
+
+```text
+https://github.com/zerohourcash/ZHC-Installer/releases/tag/v0.2.2
+```
 
 ```text
 zhcash-node-seed.zip.part01
@@ -112,7 +116,7 @@ zhcash-node-seed.zip.part01
 zhcash-node-seed.zip.part10
 ```
 
-The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256.
+The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256. New installer releases should not duplicate these Snapshot parts unless the Snapshot itself changes.
 
 Yandex Disk is supported, but its URL is not published in this repository. Official release binaries may include an obfuscated build-time Yandex URL. If you build from source, provide a Yandex public-resource URL through:
 

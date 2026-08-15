@@ -707,6 +707,11 @@ func downloadMega(ctx context.Context, megaLink string, outputPath string, partP
 	if err != nil {
 		return err
 	}
+	if done, err := finalizeCompletePart(outputPath, partPath, info.Size, verifyZipHeader); err != nil {
+		return err
+	} else if done {
+		return nil
+	}
 	if err := downloadAndDecrypt(ctx, info.DownloadURL, params, partPath, offset, info.Size, idleTimeout); err != nil {
 		return err
 	}
@@ -718,6 +723,35 @@ func finalizeDownloadedPart(outputPath string, partPath string) error {
 		return err
 	}
 	return renameDownloadedPart(outputPath, partPath)
+}
+
+func finalizeCompletePart(outputPath string, partPath string, expectedSize int64, verify func(string) error) (bool, error) {
+	stat, err := os.Stat(partPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if stat.Size() < expectedSize {
+		return false, nil
+	}
+	if stat.Size() > expectedSize {
+		fmt.Printf("Partial file is larger than expected (%s > %s); truncating to expected size.\n", humanBytes(stat.Size()), humanBytes(expectedSize))
+		if err := os.Truncate(partPath, expectedSize); err != nil {
+			return false, err
+		}
+	}
+	fmt.Println("Partial file already has expected size; finalizing it.")
+	if verify != nil {
+		if err := verify(partPath); err != nil {
+			return false, err
+		}
+	}
+	if err := renameDownloadedPart(outputPath, partPath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func renameDownloadedPart(outputPath string, partPath string) error {
@@ -936,12 +970,25 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 	if err != nil {
 		return err
 	}
+	if done, err := finalizeCompletePart(outputPath, partPath, size, nil); err != nil {
+		return err
+	} else if done {
+		return nil
+	}
 
 	out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	closed := false
+	closeOut := func() error {
+		if closed {
+			return nil
+		}
+		closed = true
+		return out.Close()
+	}
+	defer closeOut()
 	if _, err := out.Seek(offset, io.SeekStart); err != nil {
 		return err
 	}
@@ -983,6 +1030,9 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 		return err
 	}
 	fmt.Println()
+	if err := closeOut(); err != nil {
+		return err
+	}
 
 	stat, err := os.Stat(partPath)
 	if err != nil {
@@ -1019,6 +1069,11 @@ func downloadMultipartHTTP(ctx context.Context, partURLs []string, outputPath st
 	offset, err := resumeOffset(partPath, totalSize)
 	if err != nil {
 		return err
+	}
+	if done, err := finalizeCompletePart(outputPath, partPath, totalSize, verifyZipHeader); err != nil {
+		return err
+	} else if done {
+		return nil
 	}
 
 	partStart := int64(0)
