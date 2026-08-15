@@ -306,40 +306,20 @@ func TestFinalizeCompletePartIgnoresIncompletePart(t *testing.T) {
 	}
 }
 
-func TestFinalizeCompletePartTruncatesOversizedPart(t *testing.T) {
+func TestResumeOffsetDeletesOversizedPart(t *testing.T) {
 	dir := t.TempDir()
-	output := filepath.Join(dir, "snapshot.zip")
-	part := output + ".part"
-	createZip(t, part, map[string]string{"blocks/blk00000.dat": "block"})
-	stat, err := os.Stat(part)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.OpenFile(part, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.WriteString("extra bytes from failed retry"); err != nil {
-		_ = file.Close()
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	part := filepath.Join(dir, "snapshot.zip.part")
+	mustWrite(t, part, "oversized partial")
 
-	done, err := finalizeCompletePart(output, part, stat.Size(), verifyZipHeader)
+	offset, err := resumeOffset(part, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !done {
-		t.Fatal("expected oversized partial file to be recovered")
+	if offset != 0 {
+		t.Fatalf("expected resume offset 0 after deleting oversized partial, got %d", offset)
 	}
-	outputStat, err := os.Stat(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if outputStat.Size() != stat.Size() {
-		t.Fatalf("expected truncated size %d, got %d", stat.Size(), outputStat.Size())
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
+		t.Fatal("expected oversized partial file to be removed")
 	}
 }
 

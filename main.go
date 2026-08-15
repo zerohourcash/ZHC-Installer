@@ -737,10 +737,7 @@ func finalizeCompletePart(outputPath string, partPath string, expectedSize int64
 		return false, nil
 	}
 	if stat.Size() > expectedSize {
-		fmt.Printf("Partial file is larger than expected (%s > %s); truncating to expected size.\n", humanBytes(stat.Size()), humanBytes(expectedSize))
-		if err := os.Truncate(partPath, expectedSize); err != nil {
-			return false, err
-		}
+		return false, nil
 	}
 	fmt.Println("Partial file already has expected size; finalizing it.")
 	if verify != nil {
@@ -934,7 +931,11 @@ func resumeOffset(partPath string, targetSize int64) (int64, error) {
 	if stat, err := os.Stat(partPath); err == nil {
 		offset = stat.Size()
 		if offset > targetSize {
-			return 0, fmt.Errorf("partial file is larger than expected: %s > %s; use --force", humanBytes(offset), humanBytes(targetSize))
+			fmt.Printf("Partial file is larger than expected (%s > %s); deleting and downloading from zero.\n", humanBytes(offset), humanBytes(targetSize))
+			if err := os.Remove(partPath); err != nil {
+				return 0, err
+			}
+			return 0, nil
 		}
 	}
 	if offset > 0 {
