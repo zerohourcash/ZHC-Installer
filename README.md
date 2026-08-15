@@ -22,6 +22,184 @@ It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data d
 14. Downloads the ZHCASH Evolution node release for the current OS.
 15. Starts `zerohour-qt` after installation. If a node is already running, it does not start another instance.
 
+## Detailed installation flow
+
+### 1. Path detection and environment variables
+
+The installer resolves two working paths:
+
+```text
+ZHCASH_DATA_DIR
+ZHCASH_NODE_DIR
+```
+
+`ZHCASH_DATA_DIR` is where blockchain data, chainstate, blocks, and wallet files are stored.
+
+`ZHCASH_NODE_DIR` is where the node release files are installed or copied.
+
+If these variables already exist in the user environment, the installer uses them as-is and does not overwrite them.
+
+If one or both variables are missing, the installer creates them with the resolved default paths:
+
+- Windows:
+  - `ZHCASH_DATA_DIR=%APPDATA%\ZHCASH`
+  - `ZHCASH_NODE_DIR=%USERPROFILE%\Desktop`
+- Linux:
+  - `ZHCASH_DATA_DIR=$HOME/.zerohour`
+  - `ZHCASH_NODE_DIR=<directory where installer was started>`
+- macOS:
+  - `ZHCASH_DATA_DIR=$HOME/Library/Application Support/ZHCASH`
+  - `ZHCASH_NODE_DIR=<directory where installer was started>`
+
+On Windows, variables are persisted with `setx`. On Linux/macOS, variables are written to `~/.zhcash-env` and sourced from the user profile file.
+
+### 2. Node process check
+
+Before touching blockchain data, the installer checks for running ZHCASH processes:
+
+```text
+zerohour-qt
+zerohourd
+zerohour-cli
+```
+
+On Windows it checks:
+
+```text
+zerohour-qt.exe
+zerohourd.exe
+zerohour-cli.exe
+```
+
+If any of these processes are running, the installer stops them and waits until they exit. This prevents LevelDB/chainstate corruption while files are being replaced.
+
+### 3. Startup cleanup
+
+At startup, the installer removes incomplete files from previous failed runs:
+
+```text
+zhcash-node-seed.zip.part
+```
+
+If `zhcash-node-seed.zip` already exists, the installer does not blindly trust it. It checks:
+
+1. exact expected file size;
+2. full SHA256 hash.
+
+If the ZIP is valid, it is reused and no new Snapshot download is performed.
+
+If the ZIP is missing, incomplete, too large, or has a wrong SHA256, it is deleted and downloaded again from zero.
+
+### 4. Blockchain data cleanup
+
+Before extracting the Snapshot, the installer removes old blockchain/index/cache data from `ZHCASH_DATA_DIR`.
+
+It preserves wallet-related files:
+
+```text
+wallet.dat
+wallet/
+wallets/
+*.bak
+```
+
+It also preserves the active verified/downloaded Snapshot archive:
+
+```text
+zhcash-node-seed.zip
+```
+
+This cleanup is performed before download/extraction and again right before extraction. The second check protects against files created while the download was running.
+
+Use `--no-clean` only when you explicitly want to keep existing non-wallet data.
+
+### 5. Snapshot download
+
+If a valid local `zhcash-node-seed.zip` is not available, the installer downloads the Snapshot from mirrors in this order:
+
+```text
+Yandex → Mega → GitHub multipart → Zeroscan
+```
+
+The download uses one shared partial file:
+
+```text
+zhcash-node-seed.zip.part
+```
+
+If a mirror stalls or fails, the installer retries it, then switches to the next mirror.
+
+If `.part` is larger than the expected Snapshot size, it is treated as corrupted, deleted, and the download starts again from zero.
+
+GitHub fallback uses 10 parts from release `v0.2.2` and assembles them into the same final ZIP.
+
+### 6. Snapshot verification and extraction
+
+After download, the installer verifies the full Snapshot SHA256:
+
+```text
+20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7
+```
+
+Then it extracts the archive into `ZHCASH_DATA_DIR` and checks that the required directories exist:
+
+```text
+blocks/
+chainstate/
+```
+
+If extraction or verification fails, the installer stops with an error.
+
+### 7. Snapshot ZIP removal or retention
+
+By default, after successful extraction and verification, the installer deletes:
+
+```text
+zhcash-node-seed.zip
+```
+
+This saves disk space after installation.
+
+If you want to keep the ZIP for reuse or testing, run:
+
+```bash
+./zhc-installer-linux --keep-snapshot-archive
+```
+
+### 8. Node release installation
+
+After Snapshot installation, the installer downloads the ZHCASH Evolution `v1.0.0` node release.
+
+On Windows it extracts only:
+
+```text
+zerohour-qt.exe
+```
+
+and copies it to `ZHCASH_NODE_DIR`, which defaults to the Desktop.
+
+On Linux it downloads and extracts the Linux release archive into `ZHCASH_NODE_DIR`.
+
+On macOS, the Snapshot installation works, but the macOS node package is not available in ZHCASH `v1.0.0` yet.
+
+### 9. Node start
+
+After the node release is installed, the installer checks whether a node is already running.
+
+If a node is already running, it does not start another instance.
+
+If no node is running, it finds `zerohour-qt` / `zerohour-qt.exe` inside `ZHCASH_NODE_DIR` and starts it.
+
+### 10. Exit behavior
+
+By default, the installer waits for Enter before closing. This is useful on Windows, where a console window would otherwise close immediately.
+
+For scripts, disable this behavior:
+
+```bash
+./zhc-installer-linux --no-wait-on-exit
+```
+
 ## Snapshot archive
 
 Snapshot file:
@@ -225,76 +403,76 @@ When started without extra flags, the installer:
 Default install:
 
 ```bash
-./zhc-installer-linux-amd64
+./zhc-installer-linux
 ```
 
 Choose Snapshot source:
 
 ```bash
-./zhc-installer-linux-amd64 --source auto
-./zhc-installer-linux-amd64 --source mega
-./zhc-installer-linux-amd64 --source yandex
-./zhc-installer-linux-amd64 --source github
-./zhc-installer-linux-amd64 --source zeroscan
+./zhc-installer-linux --source auto
+./zhc-installer-linux --source mega
+./zhc-installer-linux --source yandex
+./zhc-installer-linux --source github
+./zhc-installer-linux --source zeroscan
 ```
 
 Download reliability options:
 
 ```bash
-./zhc-installer-linux-amd64 --idle-timeout 5m
-./zhc-installer-linux-amd64 --source-retries 2
+./zhc-installer-linux --idle-timeout 5m
+./zhc-installer-linux --source-retries 2
 ```
 
 Start downloads from zero:
 
 ```bash
-./zhc-installer-linux-amd64 --force
+./zhc-installer-linux --force
 ```
 
 Keep Snapshot ZIP after successful extraction:
 
 ```bash
-./zhc-installer-linux-amd64 --keep-snapshot-archive
+./zhc-installer-linux --keep-snapshot-archive
 ```
 
 Use custom paths:
 
 ```bash
-./zhc-installer-linux-amd64 --datadir /path/to/ZHCASH/data --node-dir /path/to/node/release
+./zhc-installer-linux --datadir /path/to/ZHCASH/data --node-dir /path/to/node/release
 ```
 
 Skip parts:
 
 ```bash
-./zhc-installer-linux-amd64 --skip-node
-./zhc-installer-linux-amd64 --skip-snapshot
+./zhc-installer-linux --skip-node
+./zhc-installer-linux --skip-snapshot
 ```
 
 Do not remove old blockchain data before extraction:
 
 ```bash
-./zhc-installer-linux-amd64 --no-clean
+./zhc-installer-linux --no-clean
 ```
 
 By default, the installer waits for Enter before closing on all platforms. Disable this for scripts:
 
 ```bash
-./zhc-installer-linux-amd64 --no-wait-on-exit
+./zhc-installer-linux --no-wait-on-exit
 ```
 
 ## Build from source
 
 ```bash
 go test ./...
-go build -trimpath -ldflags="-s -w" -o zhc-installer-linux-amd64 .
+go build -trimpath -ldflags="-s -w" -o zhc-installer-linux .
 ```
 
 Cross-build examples:
 
 ```bash
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-windows-amd64.exe .
-GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-linux-amd64 .
-GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-darwin-amd64 .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-windows.exe .
+GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-linux .
+GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-darwin .
 ```
 
 Obfuscation prevents casual extraction with tools like `strings`, but it is not a cryptographic secret once a binary is public.
