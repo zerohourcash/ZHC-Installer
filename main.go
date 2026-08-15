@@ -33,6 +33,7 @@ const defaultGithubReleaseBaseURL = "https://github.com/zerohourcash/ZHC-Install
 const defaultGithubPartCount = 10
 const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-seed.zip"
 const defaultOutputName = "zhcash-node-seed.zip"
+const snapshotSizeBytes int64 = 11172882508
 const snapshotSHA256 = "20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
 const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
@@ -143,6 +144,18 @@ func run() error {
 	}
 
 	if !*skipSnapshot {
+		snapshotPath := filepath.Join(*dataDir, defaultOutputName)
+		useExistingSnapshot := false
+		if *force {
+			_ = os.Remove(snapshotPath)
+			_ = os.Remove(snapshotPartPath(snapshotPath))
+		} else {
+			var err error
+			useExistingSnapshot, err = prepareExistingSnapshotArchive(snapshotPath, snapshotSizeBytes, snapshotSHA256)
+			if err != nil {
+				return err
+			}
+		}
 		if !*noClean {
 			fmt.Println()
 			fmt.Println("==> CLEAN BLOCKCHAIN DATA")
@@ -152,9 +165,26 @@ func run() error {
 			}
 			fmt.Printf("Removed %d old blockchain entries; wallet files were preserved.\n", removed)
 		}
-		snapshotPath, err := downloadSnapshot(ctx, sources, *dataDir, *force, *idleTimeout, *sourceRetries)
-		if err != nil {
+		if useExistingSnapshot {
+			fmt.Println("Using existing verified Snapshot archive:", snapshotPath)
+		} else {
+			var err error
+			snapshotPath, err = downloadSnapshot(ctx, sources, *dataDir, false, *idleTimeout, *sourceRetries)
+			if err != nil {
+				return err
+			}
+		}
+		fmt.Println()
+		fmt.Println("==> PREPARE FOR SNAPSHOT EXTRACTION")
+		if err := stopRunningNodes(runtime.GOOS); err != nil {
 			return err
+		}
+		if !*noClean {
+			removed, err := cleanBlockchainData(*dataDir)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Removed %d extra data entries before extraction; wallet files and Snapshot archive were preserved.\n", removed)
 		}
 		fmt.Println()
 		fmt.Println("==> EXTRACT SNAPSHOT")
@@ -166,10 +196,16 @@ func run() error {
 			return err
 		}
 		fmt.Println("Snapshot extracted and verified.")
+		if err := removeSnapshotArchive(snapshotPath); err != nil {
+			return err
+		}
 	}
 
 	if !*skipNode {
 		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout); err != nil {
+			return err
+		}
+		if err := startNodeIfNotRunning(runtime.GOOS, *nodeDir); err != nil {
 			return err
 		}
 	}
@@ -238,6 +274,15 @@ func nodeProcessNames(goos string) []string {
 	}
 }
 
+func nodeRuntimeProcessNames(goos string) []string {
+	switch goos {
+	case "windows":
+		return []string{"zerohour-qt.exe", "zerohourd.exe"}
+	default:
+		return []string{"zerohour-qt", "zerohourd"}
+	}
+}
+
 func stopRunningNodes(goos string) error {
 	names := nodeProcessNames(goos)
 	fmt.Println("Checking running ZHCASH node processes...")
@@ -270,6 +315,19 @@ func stopRunningNodes(goos string) error {
 		}
 	}
 	return nil
+}
+
+func isAnyNodeRunning(goos string) (bool, error) {
+	for _, name := range nodeRuntimeProcessNames(goos) {
+		running, err := isProcessRunning(goos, name)
+		if err != nil {
+			return false, err
+		}
+		if running {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func isProcessRunning(goos string, name string) (bool, error) {
@@ -307,6 +365,73 @@ func terminateProcess(goos string, name string) error {
 		return fmt.Errorf("failed to stop %s: %w\n%s", name, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func startNodeIfNotRunning(goos string, nodeDir string) error {
+	fmt.Println()
+	fmt.Println("==> START ZHCASH NODE")
+	running, err := isAnyNodeRunning(goos)
+	if err != nil {
+		return err
+	}
+	if running {
+		fmt.Println("ZHCASH node is already running; not starting another instance.")
+		return nil
+	}
+	executable, err := findNodeExecutable(goos, nodeDir)
+	if err != nil {
+		if goos == "darwin" {
+			fmt.Println("macOS node executable is not available yet; not starting node.")
+			return nil
+		}
+		return err
+	}
+	cmd := exec.Command(executable)
+	cmd.Dir = filepath.Dir(executable)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
+	fmt.Println("Started:", executable)
+	return nil
+}
+
+func findNodeExecutable(goos string, nodeDir string) (string, error) {
+	name := "zerohour-qt"
+	if goos == "windows" {
+		name = "zerohour-qt.exe"
+	}
+	var found string
+	err := filepath.WalkDir(nodeDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if goos == "windows" {
+			if strings.EqualFold(base, name) {
+				found = path
+				return filepath.SkipAll
+			}
+			return nil
+		}
+		if base == name {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found == "" {
+		return "", fmt.Errorf("%s not found in %s", name, nodeDir)
+	}
+	return found, nil
 }
 
 func defaultNodeDir(goos string, env map[string]string, runDir string) (string, error) {
@@ -366,6 +491,9 @@ func cleanBlockchainData(dataDir string) (int, error) {
 
 func preserveDataEntry(name string, isDir bool) bool {
 	lower := strings.ToLower(name)
+	if !isDir && (lower == strings.ToLower(defaultOutputName) || lower == strings.ToLower(defaultOutputName+".part")) {
+		return true
+	}
 	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak")) {
 		return true
 	}
@@ -373,6 +501,54 @@ func preserveDataEntry(name string, isDir bool) bool {
 		return true
 	}
 	return false
+}
+
+func removeSnapshotArchive(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	fmt.Println("Removed Snapshot archive:", path)
+	return nil
+}
+
+func prepareExistingSnapshotArchive(path string, expectedSize int64, expectedSHA256 string) (bool, error) {
+	partPath := snapshotPartPath(path)
+	if err := os.Remove(partPath); err == nil {
+		fmt.Println("Removed incomplete Snapshot partial:", partPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+
+	stat, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if stat.Size() != expectedSize {
+		fmt.Printf("Existing Snapshot archive has wrong size (%s, expected %s); deleting it.\n", humanBytes(stat.Size()), humanBytes(expectedSize))
+		if err := os.Remove(path); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	fmt.Println("Existing Snapshot archive found; verifying SHA256 before reuse.")
+	if err := verifySHA256File(path, expectedSHA256); err != nil {
+		fmt.Println("Existing Snapshot archive failed SHA256 verification; deleting it.")
+		if removeErr := os.Remove(path); removeErr != nil {
+			return false, removeErr
+		}
+		return false, nil
+	}
+	fmt.Println("Existing Snapshot archive SHA256 OK.")
+	return true, nil
 }
 
 func isDangerousPath(path string) bool {

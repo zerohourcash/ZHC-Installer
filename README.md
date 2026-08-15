@@ -10,11 +10,17 @@ It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data d
 2. Creates the data directory if it does not exist.
 3. Checks whether a ZHCASH node process is running.
 4. Stops running `zerohour-qt`, `zerohourd`, or `zerohour-cli` before changing blockchain data.
-5. Removes old blockchain data while preserving wallet files.
-6. Downloads `zhcash-node-seed.zip` into the data directory.
-7. Extracts the Snapshot into the data directory.
-8. Verifies that `blocks/` and `chainstate/` exist after extraction.
-9. Downloads the ZHCASH Evolution node release for the current OS.
+5. Removes incomplete Snapshot partial files from previous runs.
+6. Reuses `zhcash-node-seed.zip` if it already exists and passes size + SHA256 verification.
+7. Removes old blockchain data while preserving wallet files and a verified Snapshot archive.
+8. Downloads `zhcash-node-seed.zip` into the data directory only when a valid archive is not already present.
+9. Checks again that the node is not running before extraction.
+10. Removes extra data-directory files again while preserving wallet files and the downloaded Snapshot archive.
+11. Extracts the Snapshot into the data directory.
+12. Verifies that `blocks/` and `chainstate/` exist after extraction.
+13. Deletes `zhcash-node-seed.zip` after successful extraction and verification.
+14. Downloads the ZHCASH Evolution node release for the current OS.
+15. Starts `zerohour-qt` after installation. If a node is already running, it does not start another instance.
 
 ## Snapshot archive
 
@@ -66,7 +72,21 @@ wallets/
 *.bak
 ```
 
-Old blockchain/index/cache files are removed before Snapshot extraction unless `--no-clean` is used.
+Old blockchain/index/cache files are removed before Snapshot extraction unless `--no-clean` is used. At startup the installer deletes incomplete Snapshot partial files from previous runs:
+
+```text
+zhcash-node-seed.zip.part
+```
+
+If `zhcash-node-seed.zip` already exists, the installer verifies its expected size and SHA256. A valid archive is reused; an invalid or incomplete archive is deleted and downloaded again.
+
+During cleanup the installer preserves the active verified/downloaded Snapshot archive:
+
+```text
+zhcash-node-seed.zip
+```
+
+After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory.
 
 ## Snapshot sources
 

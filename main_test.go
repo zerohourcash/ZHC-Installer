@@ -133,6 +133,8 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "wallet.dat"), "wallet")
 	mustWrite(t, filepath.Join(dir, "wallet", "nested.dat"), "wallet-dir")
 	mustWrite(t, filepath.Join(dir, "wallets", "nested.dat"), "wallets-dir")
+	mustWrite(t, filepath.Join(dir, defaultOutputName), "snapshot")
+	mustWrite(t, filepath.Join(dir, defaultOutputName+".part"), "partial")
 	mustWrite(t, filepath.Join(dir, "blocks", "blk00000.dat"), "block")
 	mustWrite(t, filepath.Join(dir, "chainstate", "000001.ldb"), "state")
 	mustWrite(t, filepath.Join(dir, "debug.log"), "log")
@@ -148,6 +150,8 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 		filepath.Join(dir, "wallet.dat"),
 		filepath.Join(dir, "wallet", "nested.dat"),
 		filepath.Join(dir, "wallets", "nested.dat"),
+		filepath.Join(dir, defaultOutputName),
+		filepath.Join(dir, defaultOutputName+".part"),
 	} {
 		if _, err := os.Stat(kept); err != nil {
 			t.Fatalf("expected wallet path to be preserved: %s: %v", kept, err)
@@ -161,6 +165,84 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 		if _, err := os.Stat(removedPath); !os.IsNotExist(err) {
 			t.Fatalf("expected path to be removed: %s", removedPath)
 		}
+	}
+}
+
+func TestRemoveSnapshotArchiveDeletesZipOnly(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, defaultOutputName)
+	partial := archive + ".part"
+	mustWrite(t, archive, "snapshot")
+	mustWrite(t, partial, "partial")
+
+	if err := removeSnapshotArchive(archive); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(archive); !os.IsNotExist(err) {
+		t.Fatal("expected snapshot archive to be deleted")
+	}
+	if _, err := os.Stat(partial); err != nil {
+		t.Fatalf("partial file should not be removed by archive cleanup: %v", err)
+	}
+}
+
+func TestPrepareExistingSnapshotArchiveKeepsValidZipAndDeletesPartial(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, defaultOutputName)
+	partial := archive + ".part"
+	content := []byte("valid snapshot")
+	mustWrite(t, archive, string(content))
+	mustWrite(t, partial, "old partial")
+	sum := sha256.Sum256(content)
+
+	valid, err := prepareExistingSnapshotArchive(archive, int64(len(content)), hex.EncodeToString(sum[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !valid {
+		t.Fatal("expected existing archive to be accepted")
+	}
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatalf("expected valid archive to remain: %v", err)
+	}
+	if _, err := os.Stat(partial); !os.IsNotExist(err) {
+		t.Fatal("expected old partial to be deleted")
+	}
+}
+
+func TestPrepareExistingSnapshotArchiveDeletesInvalidZipAndPartial(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, defaultOutputName)
+	partial := archive + ".part"
+	mustWrite(t, archive, "short")
+	mustWrite(t, partial, "old partial")
+
+	valid, err := prepareExistingSnapshotArchive(archive, 100, strings.Repeat("0", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid {
+		t.Fatal("expected invalid archive to be rejected")
+	}
+	if _, err := os.Stat(archive); !os.IsNotExist(err) {
+		t.Fatal("expected invalid archive to be deleted")
+	}
+	if _, err := os.Stat(partial); !os.IsNotExist(err) {
+		t.Fatal("expected partial to be deleted")
+	}
+}
+
+func TestFindNodeExecutableFindsNestedQt(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "zhcash-evolution-1.0.0-win64", "bin", "zerohour-qt.exe")
+	mustWrite(t, exe, "exe")
+
+	got, err := findNodeExecutable("windows", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != exe {
+		t.Fatalf("unexpected executable path: got %s want %s", got, exe)
 	}
 }
 
