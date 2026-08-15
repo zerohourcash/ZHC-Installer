@@ -40,6 +40,7 @@ const nodeDirVariable = "ZHCASH_NODE_DIR"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
 const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
 const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
+const zerohourdServicePath = "/etc/systemd/system/zerohourd.service"
 
 var yandexURLPayload string
 var yandexURLKey string
@@ -97,6 +98,7 @@ func run() error {
 	waitOnExit := flag.Bool("wait-on-exit", true, "wait for Enter before exiting")
 	noWaitOnExit := flag.Bool("no-wait-on-exit", false, "do not wait for Enter before exiting")
 	env := getenvMap()
+	linuxServer := isLinuxServer(runtime.GOOS, env)
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -129,6 +131,13 @@ func run() error {
 	fmt.Println("Data directory:", *dataDir)
 	fmt.Println("Node directory:", *nodeDir)
 	fmt.Println("Source mode:", *sourceFlag)
+	if runtime.GOOS == "linux" {
+		if linuxServer {
+			fmt.Println("Linux mode: server/headless")
+		} else {
+			fmt.Println("Linux mode: GUI")
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
 	defer cancel()
@@ -216,8 +225,14 @@ func run() error {
 		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout); err != nil {
 			return err
 		}
-		if err := startNodeIfNotRunning(runtime.GOOS, *nodeDir); err != nil {
-			return err
+		if linuxServer {
+			if err := configureZerohourdSystemd(*dataDir, *nodeDir); err != nil {
+				return err
+			}
+		} else {
+			if err := startNodeIfNotRunning(runtime.GOOS, *nodeDir); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -295,6 +310,18 @@ func nodeRuntimeProcessNames(goos string) []string {
 	default:
 		return []string{"zerohour-qt", "zerohourd"}
 	}
+}
+
+func isLinuxServer(goos string, env map[string]string) bool {
+	if goos != "linux" {
+		return false
+	}
+	for _, key := range []string{"XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION", "WAYLAND_DISPLAY"} {
+		if strings.TrimSpace(env[key]) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func stopRunningNodes(goos string) error {
@@ -413,9 +440,12 @@ func startNodeIfNotRunning(goos string, nodeDir string) error {
 }
 
 func findNodeExecutable(goos string, nodeDir string) (string, error) {
-	name := "zerohour-qt"
+	return findNamedExecutable(goos, nodeDir, "zerohour-qt")
+}
+
+func findNamedExecutable(goos string, nodeDir string, name string) (string, error) {
 	if goos == "windows" {
-		name = "zerohour-qt.exe"
+		name += ".exe"
 	}
 	var found string
 	err := filepath.WalkDir(nodeDir, func(path string, entry os.DirEntry, err error) error {
@@ -448,6 +478,52 @@ func findNodeExecutable(goos string, nodeDir string) (string, error) {
 	return found, nil
 }
 
+func configureZerohourdSystemd(dataDir string, nodeDir string) error {
+	fmt.Println()
+	fmt.Println("==> CONFIGURE ZEROHOURD SYSTEMD SERVICE")
+	if os.Geteuid() != 0 {
+		return errors.New("Linux server mode requires root privileges to write /etc/systemd/system/zerohourd.service")
+	}
+	daemonPath, err := findNamedExecutable("linux", nodeDir, "zerohourd")
+	if err != nil {
+		return err
+	}
+	unit := zerohourdServiceUnit(daemonPath, dataDir)
+	if err := os.WriteFile(zerohourdServicePath, []byte(unit), 0o644); err != nil {
+		return err
+	}
+	for _, args := range [][]string{
+		{"daemon-reload"},
+		{"enable", "zerohourd.service"},
+		{"restart", "zerohourd.service"},
+	} {
+		output, err := exec.Command("systemctl", args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl %s failed: %w\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		}
+	}
+	fmt.Println("Systemd service enabled and restarted: zerohourd.service")
+	return nil
+}
+
+func zerohourdServiceUnit(daemonPath string, dataDir string) string {
+	return fmt.Sprintf(`[Unit]
+Description=ZHCASH daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%s -datadir=%s
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+`, daemonPath, dataDir)
+}
+
 func defaultNodeDir(goos string, env map[string]string, runDir string) (string, error) {
 	if configured := strings.TrimSpace(env[nodeDirVariable]); configured != "" {
 		return configured, nil
@@ -462,6 +538,14 @@ func defaultNodeDir(goos string, env map[string]string, runDir string) (string, 
 			return "", errors.New("USERPROFILE is not set")
 		}
 		return filepath.Join(home, "Desktop"), nil
+	case "linux":
+		if isLinuxServer(goos, env) {
+			if env["HOME"] == "" {
+				return "", errors.New("HOME is not set")
+			}
+			return filepath.Join(env["HOME"], "ZHCASH"), nil
+		}
+		return runDir, nil
 	default:
 		return runDir, nil
 	}

@@ -20,7 +20,9 @@ It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data d
 12. Verifies that `blocks/` and `chainstate/` exist after extraction.
 13. Deletes `zhcash-node-seed.zip` after successful extraction and verification, unless `--keep-snapshot-archive` is used.
 14. Downloads the ZHCASH Evolution node release for the current OS.
-15. Starts `zerohour-qt` after installation. If a node is already running, it does not start another instance.
+15. Starts the node after installation:
+    - GUI systems start `zerohour-qt` if no node is already running.
+    - Linux server/headless systems configure and restart `zerohourd.service`.
 
 ## Detailed installation flow
 
@@ -44,9 +46,13 @@ If one or both variables are missing, the installer creates them with the resolv
 - Windows:
   - `ZHCASH_DATA_DIR=%APPDATA%\ZHCASH`
   - `ZHCASH_NODE_DIR=%USERPROFILE%\Desktop`
-- Linux:
+- Linux GUI:
   - `ZHCASH_DATA_DIR=$HOME/.zerohour`
   - `ZHCASH_NODE_DIR=<directory where installer was started>`
+- Linux server/headless:
+  - `ZHCASH_DATA_DIR=$HOME/.zerohour`
+  - `ZHCASH_NODE_DIR=$HOME/ZHCASH`
+  - for root this becomes `/root/ZHCASH`
 - macOS:
   - `ZHCASH_DATA_DIR=$HOME/Library/Application Support/ZHCASH`
   - `ZHCASH_NODE_DIR=<directory where installer was started>`
@@ -178,7 +184,21 @@ zerohour-qt.exe
 
 and copies it to `ZHCASH_NODE_DIR`, which defaults to the Desktop.
 
-On Linux it downloads and extracts the Linux release archive into `ZHCASH_NODE_DIR`.
+On Linux with GUI it downloads and extracts the Linux release archive into `ZHCASH_NODE_DIR`, preserving the previous behavior.
+
+On Linux server/headless systems it downloads and extracts the Linux release archive into:
+
+```text
+$HOME/ZHCASH
+```
+
+For root this is:
+
+```text
+/root/ZHCASH
+```
+
+The installer treats Linux as GUI mode when desktop-session variables such as `XDG_CURRENT_DESKTOP`, `DESKTOP_SESSION`, `GDMSESSION`, or `WAYLAND_DISPLAY` are present. A plain SSH/X11 `DISPLAY` value by itself does not switch the installer to GUI mode.
 
 On macOS, the Snapshot installation works, but the macOS node package is not available in ZHCASH `v1.0.0` yet.
 
@@ -186,9 +206,21 @@ On macOS, the Snapshot installation works, but the macOS node package is not ava
 
 After the node release is installed, the installer checks whether a node is already running.
 
-If a node is already running, it does not start another instance.
+On GUI systems:
 
-If no node is running, it finds `zerohour-qt` / `zerohour-qt.exe` inside `ZHCASH_NODE_DIR` and starts it.
+- if a node is already running, the installer does not start another instance;
+- if no node is running, it finds `zerohour-qt` / `zerohour-qt.exe` inside `ZHCASH_NODE_DIR` and starts it.
+
+On Linux server/headless systems:
+
+- the installer finds `zerohourd` inside `ZHCASH_NODE_DIR`;
+- writes `/etc/systemd/system/zerohourd.service`;
+- runs `systemctl daemon-reload`;
+- runs `systemctl enable zerohourd.service`;
+- runs `systemctl restart zerohourd.service`;
+- the service uses `Restart=always` and `RestartSec=10`.
+
+Linux server/headless mode requires root privileges because it writes to `/etc/systemd/system`.
 
 ### 10. Exit behavior
 
@@ -237,12 +269,28 @@ ZHCASH_DATA_DIR=C:\Users\<User>\AppData\Roaming\ZHCASH
 ZHCASH_NODE_DIR=C:\Users\<User>\Desktop
 ```
 
-### Linux
+### Linux GUI
 
 ```text
 ZHCASH_DATA_DIR=~/.zerohour
 ZHCASH_NODE_DIR=<installer directory>
 ```
+
+### Linux server/headless
+
+```text
+ZHCASH_DATA_DIR=~/.zerohour
+ZHCASH_NODE_DIR=~/ZHCASH
+```
+
+For root:
+
+```text
+ZHCASH_DATA_DIR=/root/.zerohour
+ZHCASH_NODE_DIR=/root/ZHCASH
+```
+
+Server/headless mode is used when no desktop-session variables are detected. A plain SSH/X11 `DISPLAY` value by itself is still treated as server/headless.
 
 ### macOS
 
@@ -364,7 +412,63 @@ Downloads and extracts:
 zhcash-evolution-1.0.0-linux-x86_64.tar.gz
 ```
 
-into the directory where the installer is run from, unless `--node-dir` is provided.
+Linux GUI mode extracts it into the directory where the installer is run from, unless `--node-dir` is provided.
+
+Linux server/headless mode extracts it into:
+
+```text
+~/ZHCASH
+```
+
+For root:
+
+```text
+/root/ZHCASH
+```
+
+Then it configures and restarts `zerohourd.service`.
+
+## Linux server systemd service
+
+On Linux server/headless systems the installer creates:
+
+```text
+/etc/systemd/system/zerohourd.service
+```
+
+The service starts `zerohourd` from `ZHCASH_NODE_DIR` and passes the selected blockchain data directory through `-datadir=<ZHCASH_DATA_DIR>`.
+
+The service is configured with automatic restart:
+
+```text
+Restart=always
+RestartSec=10
+```
+
+Useful commands:
+
+```bash
+sudo systemctl status zerohourd.service
+sudo systemctl restart zerohourd.service
+sudo systemctl stop zerohourd.service
+sudo systemctl start zerohourd.service
+sudo journalctl -u zerohourd.service -f
+```
+
+Disable autostart:
+
+```bash
+sudo systemctl disable zerohourd.service
+```
+
+Remove the service completely:
+
+```bash
+sudo systemctl stop zerohourd.service
+sudo systemctl disable zerohourd.service
+sudo rm /etc/systemd/system/zerohourd.service
+sudo systemctl daemon-reload
+```
 
 ### macOS
 
@@ -397,7 +501,9 @@ When started without extra flags, the installer:
 11. Verifies that `blocks/` and `chainstate/` exist.
 12. Deletes the Snapshot ZIP unless `--keep-snapshot-archive` is used.
 13. Downloads and installs the ZHCASH Evolution node release.
-14. Starts `zerohour-qt` if no node is already running.
+14. Starts the node:
+    - GUI systems start `zerohour-qt` if no node is already running.
+    - Linux server/headless systems configure and restart `zerohourd.service`.
 15. Waits for Enter before closing.
 
 Default install:

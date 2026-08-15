@@ -310,6 +310,88 @@ func TestDefaultNodeDirPrefersZHCASHEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultNodeDirLinuxServerUsesHomeZHCASH(t *testing.T) {
+	env := map[string]string{
+		"HOME": "/root",
+	}
+
+	got, err := defaultNodeDir("linux", env, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join("/root", "ZHCASH") {
+		t.Fatalf("unexpected linux server node dir: %s", got)
+	}
+}
+
+func TestDefaultNodeDirLinuxGUIUsesRunDir(t *testing.T) {
+	env := map[string]string{
+		"HOME":                "/home/alice",
+		"XDG_CURRENT_DESKTOP": "GNOME",
+	}
+
+	got, err := defaultNodeDir("linux", env, "/opt/installer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/opt/installer" {
+		t.Fatalf("unexpected linux GUI node dir: %s", got)
+	}
+}
+
+func TestIsLinuxServer(t *testing.T) {
+	if !isLinuxServer("linux", map[string]string{"HOME": "/root"}) {
+		t.Fatal("linux without display should be server mode")
+	}
+	if !isLinuxServer("linux", map[string]string{"DISPLAY": "localhost:10.0"}) {
+		t.Fatal("ssh X11 forwarding DISPLAY alone should stay server mode")
+	}
+	if isLinuxServer("linux", map[string]string{"XDG_CURRENT_DESKTOP": "GNOME"}) {
+		t.Fatal("linux with XDG_CURRENT_DESKTOP should be GUI mode")
+	}
+	if isLinuxServer("linux", map[string]string{"DESKTOP_SESSION": "ubuntu"}) {
+		t.Fatal("linux with DESKTOP_SESSION should be GUI mode")
+	}
+	if isLinuxServer("linux", map[string]string{"GDMSESSION": "gnome"}) {
+		t.Fatal("linux with GDMSESSION should be GUI mode")
+	}
+	if isLinuxServer("linux", map[string]string{"WAYLAND_DISPLAY": "wayland-0"}) {
+		t.Fatal("linux with WAYLAND_DISPLAY should be GUI mode")
+	}
+	if isLinuxServer("windows", map[string]string{}) {
+		t.Fatal("windows must not be linux server mode")
+	}
+}
+
+func TestZerohourdServiceUnit(t *testing.T) {
+	unit := zerohourdServiceUnit("/root/ZHCASH/bin/zerohourd", "/root/.zerohour")
+
+	for _, want := range []string{
+		"ExecStart=/root/ZHCASH/bin/zerohourd -datadir=/root/.zerohour",
+		"Restart=always",
+		"RestartSec=10",
+		"WantedBy=multi-user.target",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("service unit missing %q:\n%s", want, unit)
+		}
+	}
+}
+
+func TestFindNodeExecutableFindsNestedDaemon(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "zhcash-evolution-1.0.0-linux-x86_64", "bin", "zerohourd")
+	mustWrite(t, exe, "daemon")
+
+	got, err := findNamedExecutable("linux", dir, "zerohourd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != exe {
+		t.Fatalf("unexpected daemon path: got %s want %s", got, exe)
+	}
+}
+
 func TestMissingEnvironmentUpdates(t *testing.T) {
 	updates := missingEnvironmentUpdates(map[string]string{}, "/data", "/node")
 
