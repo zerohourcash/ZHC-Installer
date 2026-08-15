@@ -91,6 +91,7 @@ func run() error {
 	skipNode := flag.Bool("skip-node", false, "skip ZHCASH node release download")
 	skipSnapshot := flag.Bool("skip-snapshot", false, "skip Snapshot download and extraction")
 	noClean := flag.Bool("no-clean", false, "do not clean old blockchain data before extracting Snapshot")
+	keepSnapshotArchive := flag.Bool("keep-snapshot-archive", false, "keep zhcash-node-seed.zip after successful extraction")
 	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "switch/retry when download makes no progress for this duration")
 	sourceRetries := flag.Int("source-retries", 2, "retry attempts on the same source before switching to the next mirror")
 	waitOnExit := flag.Bool("wait-on-exit", true, "wait for Enter before exiting")
@@ -202,8 +203,12 @@ func run() error {
 			return err
 		}
 		fmt.Println("Snapshot extracted and verified.")
-		if err := removeSnapshotArchive(snapshotPath); err != nil {
-			return err
+		if shouldRemoveSnapshotArchive(*keepSnapshotArchive) {
+			if err := removeSnapshotArchive(snapshotPath); err != nil {
+				return err
+			}
+		} else {
+			fmt.Println("Keeping Snapshot archive:", snapshotPath)
 		}
 	}
 
@@ -630,6 +635,10 @@ func removeSnapshotArchive(path string) error {
 	}
 	fmt.Println("Removed Snapshot archive:", path)
 	return nil
+}
+
+func shouldRemoveSnapshotArchive(keep bool) bool {
+	return !keep
 }
 
 func prepareExistingSnapshotArchive(path string, expectedSize int64, expectedSHA256 string) (bool, error) {

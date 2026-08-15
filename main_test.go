@@ -186,6 +186,15 @@ func TestRemoveSnapshotArchiveDeletesZipOnly(t *testing.T) {
 	}
 }
 
+func TestShouldRemoveSnapshotArchive(t *testing.T) {
+	if !shouldRemoveSnapshotArchive(false) {
+		t.Fatal("expected archive removal by default")
+	}
+	if shouldRemoveSnapshotArchive(true) {
+		t.Fatal("expected archive to be kept when requested")
+	}
+}
+
 func TestPrepareExistingSnapshotArchiveKeepsValidZipAndDeletesPartial(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, defaultOutputName)

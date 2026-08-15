@@ -18,7 +18,7 @@ It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data d
 10. Removes extra data-directory files again while preserving wallet files and the downloaded Snapshot archive.
 11. Extracts the Snapshot into the data directory.
 12. Verifies that `blocks/` and `chainstate/` exist after extraction.
-13. Deletes `zhcash-node-seed.zip` after successful extraction and verification.
+13. Deletes `zhcash-node-seed.zip` after successful extraction and verification, unless `--keep-snapshot-archive` is used.
 14. Downloads the ZHCASH Evolution node release for the current OS.
 15. Starts `zerohour-qt` after installation. If a node is already running, it does not start another instance.
 
@@ -100,7 +100,7 @@ During cleanup the installer preserves the active verified/downloaded Snapshot a
 zhcash-node-seed.zip
 ```
 
-After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory.
+After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory by default. Use `--keep-snapshot-archive` to keep the ZIP after installation.
 
 ## Snapshot sources
 
@@ -202,6 +202,26 @@ https://github.com/zerohourcash/ZHC-Installer/releases
 
 ## Help
 
+### Step-by-step behavior
+
+When started without extra flags, the installer:
+
+1. Detects or creates `ZHCASH_DATA_DIR` and `ZHCASH_NODE_DIR`.
+2. Uses existing `ZHCASH_DATA_DIR`/`ZHCASH_NODE_DIR` if they are already set.
+3. Stops running ZHCASH node processes before changing blockchain data.
+4. Removes incomplete `zhcash-node-seed.zip.part` files from old runs.
+5. Reuses an existing `zhcash-node-seed.zip` only if size and SHA256 are correct.
+6. Cleans old blockchain data while preserving wallets and the active Snapshot ZIP.
+7. Downloads Snapshot from mirrors in order: Yandex, Mega, GitHub multipart, Zeroscan.
+8. Before extraction, checks again that the node is not running.
+9. Cleans the data directory again from extra files, preserving wallets and the Snapshot ZIP.
+10. Extracts Snapshot into the ZHCASH data directory.
+11. Verifies that `blocks/` and `chainstate/` exist.
+12. Deletes the Snapshot ZIP unless `--keep-snapshot-archive` is used.
+13. Downloads and installs the ZHCASH Evolution node release.
+14. Starts `zerohour-qt` if no node is already running.
+15. Waits for Enter before closing.
+
 Default install:
 
 ```bash
@@ -229,6 +249,12 @@ Start downloads from zero:
 
 ```bash
 ./zhc-installer-linux-amd64 --force
+```
+
+Keep Snapshot ZIP after successful extraction:
+
+```bash
+./zhc-installer-linux-amd64 --keep-snapshot-archive
 ```
 
 Use custom paths:
