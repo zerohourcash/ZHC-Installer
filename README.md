@@ -73,7 +73,21 @@ Old blockchain/index/cache files are removed before Snapshot extraction unless `
 Default source order:
 
 ```text
-mega → yandex if configured → zeroscan
+yandex if configured → mega → zeroscan
+```
+
+All mirrors use one shared partial file:
+
+```text
+zhcash-node-seed.zip.part
+```
+
+If one source fails, stalls, or has no progress for the configured idle timeout, the installer retries that source and then switches to the next mirror while preserving the already downloaded bytes.
+
+Final Snapshot verification:
+
+```text
+SHA256: 20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7
 ```
 
 ### Mega
@@ -151,6 +165,13 @@ Choose Snapshot source:
 ./zhc-installer-linux-amd64 --source mega
 ./zhc-installer-linux-amd64 --source yandex
 ./zhc-installer-linux-amd64 --source zeroscan
+```
+
+Download reliability options:
+
+```bash
+./zhc-installer-linux-amd64 --idle-timeout 5m
+./zhc-installer-linux-amd64 --source-retries 2
 ```
 
 Start downloads from zero:

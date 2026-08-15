@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,12 +24,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const defaultMegaLink = "https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg"
 const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-seed.zip"
 const defaultOutputName = "zhcash-node-seed.zip"
+const snapshotSHA256 = "20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
 const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
 const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
@@ -35,6 +39,8 @@ const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/down
 var yandexURLPayload string
 var yandexURLKey string
 var waitAtExit = true
+
+var errIdleTimeout = errors.New("download idle timeout")
 
 type sourceKind string
 
@@ -79,6 +85,8 @@ func run() error {
 	skipNode := flag.Bool("skip-node", false, "skip ZHCASH node release download")
 	skipSnapshot := flag.Bool("skip-snapshot", false, "skip Snapshot download and extraction")
 	noClean := flag.Bool("no-clean", false, "do not clean old blockchain data before extracting Snapshot")
+	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "switch/retry when download makes no progress for this duration")
+	sourceRetries := flag.Int("source-retries", 2, "retry attempts on the same source before switching to the next mirror")
 	waitOnExit := flag.Bool("wait-on-exit", true, "wait for Enter before exiting")
 	noWaitOnExit := flag.Bool("no-wait-on-exit", false, "do not wait for Enter before exiting")
 	env := getenvMap()
@@ -141,7 +149,7 @@ func run() error {
 			}
 			fmt.Printf("Removed %d old blockchain entries; wallet files were preserved.\n", removed)
 		}
-		snapshotPath, err := downloadSnapshot(ctx, sources, *dataDir, *force)
+		snapshotPath, err := downloadSnapshot(ctx, sources, *dataDir, *force, *idleTimeout, *sourceRetries)
 		if err != nil {
 			return err
 		}
@@ -158,7 +166,7 @@ func run() error {
 	}
 
 	if !*skipNode {
-		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir); err != nil {
+		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout); err != nil {
 			return err
 		}
 	}
@@ -171,19 +179,19 @@ func run() error {
 func resolveSources(mode string) ([]sourceConfig, error) {
 	yandex := sourceConfig{Name: "yandex", Kind: sourceYandex, URL: configuredYandexURL()}
 	all := []sourceConfig{
-		{Name: "mega", Kind: sourceMega, URL: defaultMegaLink},
 		yandex,
+		{Name: "mega", Kind: sourceMega, URL: defaultMegaLink},
 		{Name: "zeroscan", Kind: sourceZeroscan, URL: defaultZeroscanURL},
 	}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "", "auto":
 		return all, nil
 	case "mega":
-		return all[0:1], nil
+		return []sourceConfig{all[1]}, nil
 	case "yandex", "ya", "яндекс":
-		return all[1:2], nil
+		return []sourceConfig{all[0]}, nil
 	case "zeroscan", "zeroscan.io":
-		return all[2:3], nil
+		return []sourceConfig{all[2]}, nil
 	default:
 		return nil, fmt.Errorf("unknown source %q; use auto, mega, yandex, or zeroscan", mode)
 	}
@@ -541,10 +549,10 @@ func decodeObfuscatedYandexURL(payload string, key string) (string, error) {
 	return string(data), nil
 }
 
-func downloadFromSource(ctx context.Context, source sourceConfig, outputPath string, partPath string) error {
+func downloadFromSource(ctx context.Context, source sourceConfig, outputPath string, partPath string, idleTimeout time.Duration) error {
 	switch source.Kind {
 	case sourceMega:
-		return downloadMega(ctx, source.URL, outputPath, partPath)
+		return downloadMega(ctx, source.URL, outputPath, partPath, idleTimeout)
 	case sourceYandex:
 		if source.URL == "" {
 			return fmt.Errorf("%s is not set", yandexURLVariable)
@@ -553,43 +561,58 @@ func downloadFromSource(ctx context.Context, source sourceConfig, outputPath str
 		if err != nil {
 			return err
 		}
-		return downloadPlainHTTP(ctx, info.DownloadURL, outputPath, partPath, info.Size)
+		return downloadPlainHTTP(ctx, info.DownloadURL, outputPath, partPath, info.Size, idleTimeout)
 	case sourceZeroscan:
 		size, err := requestHTTPContentLength(ctx, source.URL)
 		if err != nil {
 			return err
 		}
-		return downloadPlainHTTP(ctx, source.URL, outputPath, partPath, size)
+		return downloadPlainHTTP(ctx, source.URL, outputPath, partPath, size, idleTimeout)
 	default:
 		return fmt.Errorf("unsupported source kind: %s", source.Kind)
 	}
 }
 
-func downloadSnapshot(ctx context.Context, sources []sourceConfig, dataDir string, force bool) (string, error) {
+func downloadSnapshot(ctx context.Context, sources []sourceConfig, dataDir string, force bool, idleTimeout time.Duration, sourceRetries int) (string, error) {
 	outputPath := filepath.Join(dataDir, defaultOutputName)
+	partPath := snapshotPartPath(outputPath)
 	if force {
 		_ = os.Remove(outputPath)
-		for _, source := range sources {
-			_ = os.Remove(snapshotPartPath(outputPath, source.Name))
-		}
+		_ = os.Remove(partPath)
 	}
 	var failures []string
+	attempts := sourceRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
 	for _, source := range sources {
-		partPath := snapshotPartPath(outputPath, source.Name)
 		fmt.Println()
 		fmt.Println("==> DOWNLOAD SNAPSHOT FROM", strings.ToUpper(source.Name))
-		if err := downloadFromSource(ctx, source, outputPath, partPath); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", source.Name, err))
-			fmt.Println("Source failed:", err)
-			continue
+		for attempt := 1; attempt <= attempts; attempt++ {
+			if attempt > 1 {
+				fmt.Printf("Retrying source %s: attempt %d/%d\n", source.Name, attempt, attempts)
+			}
+			if err := downloadFromSource(ctx, source, outputPath, partPath, idleTimeout); err != nil {
+				failures = append(failures, fmt.Sprintf("%s attempt %d/%d: %v", source.Name, attempt, attempts, err))
+				fmt.Printf("source failed: %s attempt %d/%d: %v\n", source.Name, attempt, attempts, err)
+				continue
+			}
+			if err := verifySHA256File(outputPath, snapshotSHA256); err != nil {
+				_ = os.Remove(outputPath)
+				failures = append(failures, fmt.Sprintf("%s checksum: %v", source.Name, err))
+				fmt.Printf("source failed: %s checksum: %v\n", source.Name, err)
+				continue
+			}
+			fmt.Println("Snapshot SHA256 OK")
+			return outputPath, nil
 		}
-		return outputPath, nil
+		fmt.Println("switching to next source")
 	}
 	return "", fmt.Errorf("all snapshot sources failed: %s", strings.Join(failures, "; "))
 }
 
-func snapshotPartPath(outputPath string, sourceName string) string {
-	return outputPath + "." + sourceName + ".part"
+func snapshotPartPath(outputPath string) string {
+	return outputPath + ".part"
 }
 
 func verifySnapshotLayout(dataDir string) error {
@@ -605,7 +628,7 @@ func verifySnapshotLayout(dataDir string) error {
 	return nil
 }
 
-func installNodeRelease(ctx context.Context, goos string, nodeDir string) error {
+func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTimeout time.Duration) error {
 	fmt.Println()
 	fmt.Println("==> INSTALL NODE RELEASE")
 	switch goos {
@@ -616,7 +639,7 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string) error 
 		}
 		defer os.RemoveAll(tempDir)
 		archive := filepath.Join(tempDir, "zhcash-evolution-1.0.0-win64.zip")
-		if err := downloadPlainHTTPFile(ctx, windowsNodeURL, archive, archive+".part"); err != nil {
+		if err := downloadPlainHTTPFile(ctx, windowsNodeURL, archive, archive+".part", idleTimeout); err != nil {
 			return err
 		}
 		target, err := extractSingleFileFromZip(archive, "zerohour-qt.exe", nodeDir)
@@ -627,7 +650,7 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string) error 
 		return nil
 	case "linux":
 		archive := filepath.Join(nodeDir, "zhcash-evolution-1.0.0-linux-x86_64.tar.gz")
-		if err := downloadPlainHTTPFile(ctx, linuxNodeURL, archive, archive+".part"); err != nil {
+		if err := downloadPlainHTTPFile(ctx, linuxNodeURL, archive, archive+".part", idleTimeout); err != nil {
 			return err
 		}
 		if err := extractTarGzArchive(archive, nodeDir); err != nil {
@@ -643,7 +666,7 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string) error 
 	}
 }
 
-func downloadMega(ctx context.Context, megaLink string, outputPath string, partPath string) error {
+func downloadMega(ctx context.Context, megaLink string, outputPath string, partPath string, idleTimeout time.Duration) error {
 	fileID, fileKey, err := parseMegaLink(megaLink)
 	if err != nil {
 		return err
@@ -668,7 +691,7 @@ func downloadMega(ctx context.Context, megaLink string, outputPath string, partP
 	if err != nil {
 		return err
 	}
-	if err := downloadAndDecrypt(ctx, info.DownloadURL, params, partPath, offset, info.Size); err != nil {
+	if err := downloadAndDecrypt(ctx, info.DownloadURL, params, partPath, offset, info.Size, idleTimeout); err != nil {
 		return err
 	}
 	return finalizeDownloadedPart(outputPath, partPath)
@@ -839,6 +862,23 @@ func existingComplete(path string, size int64) (bool, error) {
 	return stat.Size() == size, nil
 }
 
+func verifySHA256File(path string, expectedHex string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(hash.Sum(nil))
+	if !strings.EqualFold(got, expectedHex) {
+		return fmt.Errorf("SHA256 mismatch for %s: got %s expected %s", path, got, expectedHex)
+	}
+	return nil
+}
+
 func resumeOffset(partPath string, targetSize int64) (int64, error) {
 	offset := int64(0)
 	if stat, err := os.Stat(partPath); err == nil {
@@ -853,22 +893,22 @@ func resumeOffset(partPath string, targetSize int64) (int64, error) {
 	return offset, nil
 }
 
-func downloadPlainHTTP(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64) error {
-	if err := downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size); err != nil {
+func downloadPlainHTTP(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64, idleTimeout time.Duration) error {
+	if err := downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size, idleTimeout); err != nil {
 		return err
 	}
 	return verifyZipHeader(outputPath)
 }
 
-func downloadPlainHTTPFile(ctx context.Context, sourceURL string, outputPath string, partPath string) error {
+func downloadPlainHTTPFile(ctx context.Context, sourceURL string, outputPath string, partPath string, idleTimeout time.Duration) error {
 	size, err := requestHTTPContentLength(ctx, sourceURL)
 	if err != nil {
 		return err
 	}
-	return downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size)
+	return downloadPlainHTTPFileWithSize(ctx, sourceURL, outputPath, partPath, size, idleTimeout)
 }
 
-func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64) error {
+func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, outputPath string, partPath string, size int64, idleTimeout time.Duration) error {
 	fmt.Println("Size:", humanBytes(size))
 	if complete, err := existingComplete(outputPath, size); err != nil {
 		return err
@@ -890,7 +930,12 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	downloadCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	watchdog := newIdleWatchdog(idleTimeout, cancel)
+	defer watchdog.stop()
+
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return err
 	}
@@ -905,13 +950,17 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 	}
 
 	progress := &progressReader{
-		reader: resp.Body,
-		start:  time.Now(),
-		last:   time.Now(),
-		offset: offset,
-		total:  size,
+		reader:     resp.Body,
+		start:      time.Now(),
+		last:       time.Now(),
+		offset:     offset,
+		total:      size,
+		onProgress: watchdog.progress,
 	}
 	if _, err := io.Copy(out, progress); err != nil {
+		if errors.Is(context.Cause(downloadCtx), errIdleTimeout) {
+			return fmt.Errorf("%w after %s without progress", errIdleTimeout, idleTimeout)
+		}
 		return err
 	}
 	fmt.Println()
@@ -926,7 +975,7 @@ func downloadPlainHTTPFileWithSize(ctx context.Context, sourceURL string, output
 	return renameDownloadedPart(outputPath, partPath)
 }
 
-func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCryptoParams, outputPath string, offset int64, targetSize int64) error {
+func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCryptoParams, outputPath string, offset int64, targetSize int64, idleTimeout time.Duration) error {
 	out, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -936,7 +985,12 @@ func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCrypto
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	downloadCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	watchdog := newIdleWatchdog(idleTimeout, cancel)
+	defer watchdog.stop()
+
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return err
 	}
@@ -959,14 +1013,18 @@ func downloadAndDecrypt(ctx context.Context, sourceURL string, params megaCrypto
 	stream := newCTRAtOffset(block, params.IV, offset)
 	reader := &cipher.StreamReader{S: stream, R: resp.Body}
 	progress := &progressReader{
-		reader: reader,
-		start:  time.Now(),
-		last:   time.Now(),
-		offset: offset,
-		total:  targetSize,
+		reader:     reader,
+		start:      time.Now(),
+		last:       time.Now(),
+		offset:     offset,
+		total:      targetSize,
+		onProgress: watchdog.progress,
 	}
 
 	if _, err := io.Copy(out, progress); err != nil {
+		if errors.Is(context.Cause(downloadCtx), errIdleTimeout) {
+			return fmt.Errorf("%w after %s without progress", errIdleTimeout, idleTimeout)
+		}
 		return err
 	}
 	fmt.Println()
@@ -1015,17 +1073,21 @@ func verifyZipHeader(path string) error {
 }
 
 type progressReader struct {
-	reader io.Reader
-	start  time.Time
-	last   time.Time
-	offset int64
-	total  int64
-	read   int64
+	reader     io.Reader
+	start      time.Time
+	last       time.Time
+	offset     int64
+	total      int64
+	read       int64
+	onProgress func()
 }
 
 func (p *progressReader) Read(buf []byte) (int, error) {
 	n, err := p.reader.Read(buf)
 	if n > 0 {
+		if p.onProgress != nil {
+			p.onProgress()
+		}
 		p.read += int64(n)
 		now := time.Now()
 		if now.Sub(p.last) >= time.Second {
@@ -1037,6 +1099,46 @@ func (p *progressReader) Read(buf []byte) (int, error) {
 		p.print(time.Now())
 	}
 	return n, err
+}
+
+type idleWatchdog struct {
+	timeout time.Duration
+	timer   *time.Timer
+	mu      sync.Mutex
+	stopped bool
+}
+
+func newIdleWatchdog(timeout time.Duration, cancel context.CancelCauseFunc) *idleWatchdog {
+	w := &idleWatchdog{timeout: timeout}
+	if timeout <= 0 {
+		return w
+	}
+	w.timer = time.AfterFunc(timeout, func() {
+		cancel(errIdleTimeout)
+	})
+	return w
+}
+
+func (w *idleWatchdog) progress() {
+	if w.timeout <= 0 || w.timer == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return
+	}
+	w.timer.Reset(w.timeout)
+}
+
+func (w *idleWatchdog) stop() {
+	if w.timeout <= 0 || w.timer == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	w.timer.Stop()
 }
 
 func (p *progressReader) print(now time.Time) {

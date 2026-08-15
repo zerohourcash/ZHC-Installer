@@ -3,13 +3,18 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDeriveMegaCryptoParams(t *testing.T) {
@@ -53,7 +58,7 @@ func TestResolveSourcesAutoOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sourceNames(sources); !bytes.Equal([]byte(got), []byte("mega,yandex,zeroscan")) {
+	if got := sourceNames(sources); !bytes.Equal([]byte(got), []byte("yandex,mega,zeroscan")) {
 		t.Fatalf("unexpected auto source order: %s", got)
 	}
 }
@@ -217,6 +222,47 @@ func TestExtractWindowsQtFromNestedReleaseZip(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "zerohour-cli.exe")); !os.IsNotExist(err) {
 		t.Fatal("should not extract unrelated exe")
+	}
+}
+
+func TestSnapshotPartPathIsSharedAcrossMirrors(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "zhcash-node-seed.zip")
+
+	if got := snapshotPartPath(output); got != output+".part" {
+		t.Fatalf("unexpected snapshot partial path: %s", got)
+	}
+}
+
+func TestVerifySHA256File(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.zip")
+	content := []byte("snapshot")
+	mustWrite(t, path, string(content))
+	sum := sha256.Sum256(content)
+
+	if err := verifySHA256File(path, hex.EncodeToString(sum[:])); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifySHA256FileRejectsMismatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.zip")
+	mustWrite(t, path, "snapshot")
+
+	if err := verifySHA256File(path, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+}
+
+func TestIdleWatchdogCancelsAfterNoProgress(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	watchdog := newIdleWatchdog(10*time.Millisecond, cancel)
+	defer watchdog.stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if !errors.Is(context.Cause(ctx), errIdleTimeout) {
+		t.Fatalf("expected idle timeout cause, got %v", context.Cause(ctx))
 	}
 }
 
