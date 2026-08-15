@@ -270,6 +270,64 @@ func TestDefaultDataDirByOS(t *testing.T) {
 	}
 }
 
+func TestDefaultDataDirPrefersZHCASHEnv(t *testing.T) {
+	env := map[string]string{
+		dataDirVariable: "/custom/zhcash-data",
+		"APPDATA":       "/Users/Alice/AppData/Roaming",
+		"HOME":          "/home/alice",
+	}
+
+	got, err := defaultDataDir("windows", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/custom/zhcash-data" {
+		t.Fatalf("expected %s to win, got %s", dataDirVariable, got)
+	}
+}
+
+func TestDefaultNodeDirPrefersZHCASHEnv(t *testing.T) {
+	env := map[string]string{
+		nodeDirVariable: "/custom/zhcash-node",
+		"USERPROFILE":   "/Users/Alice",
+	}
+
+	got, err := defaultNodeDir("windows", env, "/run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/custom/zhcash-node" {
+		t.Fatalf("expected %s to win, got %s", nodeDirVariable, got)
+	}
+}
+
+func TestMissingEnvironmentUpdates(t *testing.T) {
+	updates := missingEnvironmentUpdates(map[string]string{}, "/data", "/node")
+
+	if len(updates) != 2 {
+		t.Fatalf("unexpected update count: %d", len(updates))
+	}
+	if updates[0].Name != dataDirVariable || updates[0].Value != "/data" {
+		t.Fatalf("unexpected data dir update: %#v", updates[0])
+	}
+	if updates[1].Name != nodeDirVariable || updates[1].Value != "/node" {
+		t.Fatalf("unexpected node dir update: %#v", updates[1])
+	}
+}
+
+func TestMissingEnvironmentUpdatesSkipsExisting(t *testing.T) {
+	updates := missingEnvironmentUpdates(map[string]string{
+		dataDirVariable: "/existing-data",
+	}, "/data", "/node")
+
+	if len(updates) != 1 {
+		t.Fatalf("unexpected update count: %d", len(updates))
+	}
+	if updates[0].Name != nodeDirVariable {
+		t.Fatalf("unexpected update: %#v", updates[0])
+	}
+}
+
 func TestNodeProcessNamesByOS(t *testing.T) {
 	if got := strings.Join(nodeProcessNames("windows"), ","); got != "zerohour-qt.exe,zerohourd.exe,zerohour-cli.exe" {
 		t.Fatalf("unexpected windows process names: %s", got)

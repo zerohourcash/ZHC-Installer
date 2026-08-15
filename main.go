@@ -35,6 +35,8 @@ const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-
 const defaultOutputName = "zhcash-node-seed.zip"
 const snapshotSizeBytes int64 = 11172882508
 const snapshotSHA256 = "20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7"
+const dataDirVariable = "ZHCASH_DATA_DIR"
+const nodeDirVariable = "ZHCASH_NODE_DIR"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
 const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
 const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
@@ -111,6 +113,10 @@ func run() error {
 	nodeDir := flag.String("node-dir", defaultNodedir, "node release install/download directory")
 	flag.Parse()
 	waitAtExit = *waitOnExit && !*noWaitOnExit
+
+	if err := ensureEnvironmentVariables(runtime.GOOS, env, *dataDir, *nodeDir); err != nil {
+		return err
+	}
 
 	sources, err := resolveSources(*sourceFlag)
 	if err != nil {
@@ -240,6 +246,9 @@ func resolveSources(mode string) ([]sourceConfig, error) {
 }
 
 func defaultDataDir(goos string, env map[string]string) (string, error) {
+	if configured := strings.TrimSpace(env[dataDirVariable]); configured != "" {
+		return configured, nil
+	}
 	switch goos {
 	case "windows":
 		if env["APPDATA"] == "" {
@@ -435,6 +444,9 @@ func findNodeExecutable(goos string, nodeDir string) (string, error) {
 }
 
 func defaultNodeDir(goos string, env map[string]string, runDir string) (string, error) {
+	if configured := strings.TrimSpace(env[nodeDirVariable]); configured != "" {
+		return configured, nil
+	}
 	switch goos {
 	case "windows":
 		home := env["USERPROFILE"]
@@ -459,6 +471,109 @@ func getenvMap() map[string]string {
 		}
 	}
 	return out
+}
+
+type environmentUpdate struct {
+	Name  string
+	Value string
+}
+
+func missingEnvironmentUpdates(env map[string]string, dataDir string, nodeDir string) []environmentUpdate {
+	var updates []environmentUpdate
+	if strings.TrimSpace(env[dataDirVariable]) == "" && dataDir != "" {
+		updates = append(updates, environmentUpdate{Name: dataDirVariable, Value: dataDir})
+	}
+	if strings.TrimSpace(env[nodeDirVariable]) == "" && nodeDir != "" {
+		updates = append(updates, environmentUpdate{Name: nodeDirVariable, Value: nodeDir})
+	}
+	return updates
+}
+
+func ensureEnvironmentVariables(goos string, env map[string]string, dataDir string, nodeDir string) error {
+	updates := missingEnvironmentUpdates(env, dataDir, nodeDir)
+	if len(updates) == 0 {
+		return nil
+	}
+	fmt.Println("Configuring missing ZHCASH environment variables...")
+	for _, update := range updates {
+		if err := os.Setenv(update.Name, update.Value); err != nil {
+			return err
+		}
+		if err := persistUserEnvironmentVariable(goos, update.Name, update.Value); err != nil {
+			return err
+		}
+		fmt.Printf("%s=%s\n", update.Name, update.Value)
+	}
+	return nil
+}
+
+func persistUserEnvironmentVariable(goos string, name string, value string) error {
+	if goos == "windows" {
+		output, err := exec.Command("setx", name, value).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to persist %s with setx: %w\n%s", name, err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	envFile := filepath.Join(home, ".zhcash-env")
+	if err := upsertShellExport(envFile, name, value); err != nil {
+		return err
+	}
+	profile := filepath.Join(home, ".profile")
+	if goos == "darwin" {
+		profile = filepath.Join(home, ".zprofile")
+	}
+	return ensureProfileSourcesEnvFile(profile, envFile)
+}
+
+func upsertShellExport(path string, name string, value string) error {
+	line := fmt.Sprintf("export %s=%s", name, shellSingleQuote(value))
+	content, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	lines := strings.Split(string(content), "\n")
+	replaced := false
+	for i, existing := range lines {
+		if strings.HasPrefix(existing, "export "+name+"=") {
+			lines[i] = line
+			replaced = true
+		}
+	}
+	if !replaced {
+		if len(lines) == 1 && lines[0] == "" {
+			lines[0] = line
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	output := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	return os.WriteFile(path, []byte(output), 0o644)
+}
+
+func ensureProfileSourcesEnvFile(profile string, envFile string) error {
+	sourceLine := fmt.Sprintf("[ -f %s ] && . %s", shellSingleQuote(envFile), shellSingleQuote(envFile))
+	content, err := os.ReadFile(profile)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(content), sourceLine) {
+		return nil
+	}
+	output := strings.TrimRight(string(content), "\n")
+	if output != "" {
+		output += "\n"
+	}
+	output += sourceLine + "\n"
+	return os.WriteFile(profile, []byte(output), 0o644)
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func cleanBlockchainData(dataDir string) (int, error) {

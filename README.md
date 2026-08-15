@@ -41,25 +41,39 @@ The Snapshot is a bootstrap seed. The node still verifies local data and syncs t
 
 ## Default data directories
 
-The installer uses the same default data directories as the node:
+The installer first checks ZHCASH-specific environment variables:
+
+```text
+ZHCASH_DATA_DIR
+ZHCASH_NODE_DIR
+```
+
+If they already exist, their paths are used and are not overwritten.
+
+If they do not exist, the installer creates them with standard paths:
 
 ### Windows
 
 ```text
-C:\Users\<User>\AppData\Roaming\ZHCASH
+ZHCASH_DATA_DIR=C:\Users\<User>\AppData\Roaming\ZHCASH
+ZHCASH_NODE_DIR=C:\Users\<User>\Desktop
 ```
 
 ### Linux
 
 ```text
-~/.zerohour
+ZHCASH_DATA_DIR=~/.zerohour
+ZHCASH_NODE_DIR=<installer directory>
 ```
 
 ### macOS
 
 ```text
-~/Library/Application Support/ZHCASH
+ZHCASH_DATA_DIR=~/Library/Application Support/ZHCASH
+ZHCASH_NODE_DIR=<installer directory>
 ```
+
+On Windows the variables are persisted with `setx`. On Linux they are written to `~/.zhcash-env` and sourced from `~/.profile`. On macOS they are written to `~/.zhcash-env` and sourced from `~/.zprofile`.
 
 ## Wallet safety
 
