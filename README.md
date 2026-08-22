@@ -4,6 +4,30 @@ ZHC-Installer is a console installer for bootstrapping a ZHCASH node from a read
 
 It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallet files, and downloads the matching ZHCASH node release for the current OS.
 
+## Linux: install and start with one command
+
+For a Linux server or headless machine, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | sudo bash
+```
+
+This command downloads the latest official `zhc-installer-linux` release from GitHub, verifies it against the release `SHA256SUMS`, installs it as `/usr/local/bin/zhc-installer`, and starts it with `--no-wait-on-exit`.
+
+The installer stops a running ZHCASH node and replaces old blockchain data with the verified Snapshot while preserving `wallet.dat`, `wallet/`, `wallets/`, and `*.bak`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
+
+On a Linux desktop, run the same installer without `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | bash
+```
+
+The desktop command installs the executable as `~/.local/bin/zhc-installer`. Both commands accept the regular installer flags after `bash -s --`. For example, to retain the downloaded Snapshot archive on a server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | sudo bash -s -- --keep-snapshot-archive
+```
+
 ## What the installer does
 
 1. Detects the standard ZHCASH data directory.
