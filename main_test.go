@@ -510,10 +510,10 @@ func TestMissingEnvironmentUpdatesSkipsExisting(t *testing.T) {
 }
 
 func TestNodeProcessNamesByOS(t *testing.T) {
-	if got := strings.Join(nodeProcessNames("windows"), ","); got != "zerohour-qt.exe,zerohourd.exe,zerohour-cli.exe" {
+	if got := strings.Join(nodeProcessNames("windows"), ","); got != "zerohour-qt.exe,zerohourd.exe" {
 		t.Fatalf("unexpected windows process names: %s", got)
 	}
-	if got := strings.Join(nodeProcessNames("linux"), ","); got != "zerohour-qt,zerohourd,zerohour-cli" {
+	if got := strings.Join(nodeProcessNames("linux"), ","); got != "zerohour-qt,zerohourd" {
 		t.Fatalf("unexpected linux process names: %s", got)
 	}
 }

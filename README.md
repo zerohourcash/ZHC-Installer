@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 1. Detects the standard ZHCASH data directory.
 2. Creates the data directory if it does not exist.
 3. Checks whether a ZHCASH node process is running.
-4. Stops running `zerohour-qt`, `zerohourd`, or `zerohour-cli` before changing blockchain data.
+4. Stops running `zerohour-qt` or `zerohourd` before changing blockchain data. Short-lived `zerohour-cli` commands are not treated as node processes.
 5. Removes incomplete Snapshot partial files from previous runs.
 6. Reuses `zhcash-node-seed.zip` if it already exists and passes size + SHA256 verification.
 7. Removes old blockchain data while preserving wallet files, `*.conf`, and a verified Snapshot archive.
@@ -90,7 +90,6 @@ Before touching blockchain data, the installer checks for running ZHCASH process
 ```text
 zerohour-qt
 zerohourd
-zerohour-cli
 ```
 
 On Windows it checks:
@@ -98,10 +97,9 @@ On Windows it checks:
 ```text
 zerohour-qt.exe
 zerohourd.exe
-zerohour-cli.exe
 ```
 
-If `zerohourd.service` is active on Linux, the installer stops the systemd unit first so that `Restart=always` cannot recreate blockchain files during cleanup. It then stops any remaining node processes and waits until they exit. This prevents LevelDB/chainstate corruption while files are being replaced.
+If `zerohourd.service` is active on Linux, the installer stops the systemd unit first so that `Restart=always` cannot recreate blockchain files during cleanup. It then stops any remaining node processes and waits until they exit. `zerohour-cli` is deliberately ignored because it is an RPC client rather than a node process and may be launched repeatedly by monitoring. This prevents both LevelDB/chainstate corruption and false installer stalls.
 
 ### 3. Startup cleanup
 

@@ -298,19 +298,14 @@ func waitForEnter() {
 func nodeProcessNames(goos string) []string {
 	switch goos {
 	case "windows":
-		return []string{"zerohour-qt.exe", "zerohourd.exe", "zerohour-cli.exe"}
-	default:
-		return []string{"zerohour-qt", "zerohourd", "zerohour-cli"}
-	}
-}
-
-func nodeRuntimeProcessNames(goos string) []string {
-	switch goos {
-	case "windows":
 		return []string{"zerohour-qt.exe", "zerohourd.exe"}
 	default:
 		return []string{"zerohour-qt", "zerohourd"}
 	}
+}
+
+func nodeRuntimeProcessNames(goos string) []string {
+	return nodeProcessNames(goos)
 }
 
 func isLinuxServer(goos string, env map[string]string) bool {
