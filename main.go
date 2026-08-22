@@ -161,6 +161,10 @@ func run() error {
 	}
 
 	if !*skipSnapshot {
+		configurationBackups, err := captureConfigurationFiles(*dataDir)
+		if err != nil {
+			return err
+		}
 		snapshotPath := filepath.Join(*dataDir, defaultOutputName)
 		useExistingSnapshot := false
 		if *force {
@@ -206,8 +210,12 @@ func run() error {
 		fmt.Println()
 		fmt.Println("==> EXTRACT SNAPSHOT")
 		fmt.Println("Archive:", snapshotPath)
-		if err := extractZipArchive(snapshotPath, *dataDir); err != nil {
+		extractErr := extractZipArchive(snapshotPath, *dataDir)
+		if err := restoreConfigurationFiles(*dataDir, configurationBackups); err != nil {
 			return err
+		}
+		if extractErr != nil {
+			return extractErr
 		}
 		if err := verifySnapshotLayout(*dataDir); err != nil {
 			return err
@@ -753,6 +761,66 @@ func printRemainingDataEntries(dataDir string) error {
 	}
 	if !found {
 		fmt.Println("- none")
+	}
+	return nil
+}
+
+type configurationBackup struct {
+	name string
+	data []byte
+	mode os.FileMode
+}
+
+func captureConfigurationFiles(dataDir string) ([]configurationBackup, error) {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	backups := make([]configurationBackup, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".conf") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			fmt.Printf("Configuration path preserved without in-memory backup: %q\n", entry.Name())
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dataDir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		backups = append(backups, configurationBackup{name: entry.Name(), data: data, mode: info.Mode()})
+	}
+	if len(backups) == 0 {
+		fmt.Printf("WARNING: no regular *.conf file exists in %s; there is no local configuration to preserve.\n", dataDir)
+		return backups, nil
+	}
+	fmt.Println("Configuration files backed up in memory before cleanup:")
+	for _, backup := range backups {
+		fmt.Printf("- %q\n", backup.name)
+	}
+	return backups, nil
+}
+
+func restoreConfigurationFiles(dataDir string, backups []configurationBackup) error {
+	for _, backup := range backups {
+		target := filepath.Join(dataDir, backup.name)
+		current, err := os.ReadFile(target)
+		if err == nil && bytes.Equal(current, backup.data) {
+			fmt.Printf("Configuration verified unchanged: %q\n", backup.name)
+			continue
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("verify configuration %s: %w", target, err)
+		}
+		if err := os.WriteFile(target, backup.data, backup.mode.Perm()); err != nil {
+			return fmt.Errorf("restore configuration %s: %w", target, err)
+		}
+		fmt.Printf("Configuration restored from in-memory backup: %q\n", backup.name)
 	}
 	return nil
 }

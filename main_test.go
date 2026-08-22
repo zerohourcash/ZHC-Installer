@@ -221,6 +221,102 @@ func TestExtractSnapshotDoesNotOverwriteWalletOrConfiguration(t *testing.T) {
 	}
 }
 
+func TestConfigurationBackupRestoresDeletedAndChangedFiles(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "zerohour.conf")
+	second := filepath.Join(dir, "custom.CONF")
+	mustWrite(t, first, "rpcuser=local")
+	mustWrite(t, second, "txindex=1")
+
+	backups, err := captureConfigurationFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("unexpected configuration backup count: %d", len(backups))
+	}
+	if err := os.Remove(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("txindex=0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreConfigurationFiles(dir, backups); err != nil {
+		t.Fatal(err)
+	}
+	for path, expected := range map[string]string{
+		first:  "rpcuser=local",
+		second: "txindex=1",
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != expected {
+			t.Fatalf("unexpected restored content for %s: %q", path, content)
+		}
+	}
+}
+
+func TestConfigurationBackupReportsNoConfiguration(t *testing.T) {
+	backups, err := captureConfigurationFiles(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected no configuration backups, got %d", len(backups))
+	}
+}
+
+func TestFinalSnapshotInstallationKeepsConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "zerohour.conf")
+	archivePath := filepath.Join(dir, defaultOutputName)
+	const originalConfig = "server=1\nrpcuser=local\nrpcpassword=secret\n"
+	mustWrite(t, configPath, originalConfig)
+	mustWrite(t, filepath.Join(dir, "blocks", "old.dat"), "old-block")
+	mustWrite(t, filepath.Join(dir, "chainstate", "old.ldb"), "old-state")
+	createZip(t, archivePath, map[string]string{
+		"blocks/blk00000.dat":   "snapshot-block",
+		"chainstate/000001.ldb": "snapshot-state",
+		"zerohour.conf":         "server=0\nrpcuser=snapshot\n",
+	})
+
+	backups, err := captureConfigurationFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanBlockchainData(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cleanBlockchainData(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractZipArchive(archivePath, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreConfigurationFiles(dir, backups); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySnapshotLayout(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSnapshotArchive(archivePath); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("configuration missing after final Snapshot cleanup: %v", err)
+	}
+	if string(content) != originalConfig {
+		t.Fatalf("configuration changed after final Snapshot cleanup: %q", content)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("Snapshot archive should be removed at the end: %v", err)
+	}
+}
+
 func TestStopManagedNodeServiceIgnoresMissingSystemctl(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if err := stopManagedNodeService("linux"); err != nil {

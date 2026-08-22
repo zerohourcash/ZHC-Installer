@@ -140,6 +140,8 @@ zhcash-node-seed.zip
 
 This cleanup is performed before download/extraction and again right before extraction. The second check protects against files created while the download was running.
 
+Before cleanup, every regular top-level `*.conf` file is also copied into memory. After Snapshot extraction, the installer verifies the contents and restores a missing or changed configuration file. It prints a warning if no `*.conf` existed before cleanup, because a previously deleted configuration cannot be recovered automatically.
+
 After each cleanup, the installer prints every file and directory that remains. Only wallets, wallet backups, `*.conf` files, and the active Snapshot archive may remain. If any other top-level entry survives cleanup, the installer stops before extraction and reports its path.
 
 Use `--no-clean` only when you explicitly want to keep existing non-wallet data.
@@ -352,7 +354,7 @@ During cleanup the installer preserves the active verified/downloaded Snapshot a
 zhcash-node-seed.zip
 ```
 
-The installer lists the remaining files and directories after both cleanup passes. Snapshot extraction also refuses to overwrite preserved wallet, backup, or `*.conf` paths.
+The installer lists the remaining files and directories after both cleanup passes. Snapshot extraction also refuses to overwrite preserved wallet, backup, or `*.conf` paths. As a second layer of protection, regular `*.conf` files are backed up in memory before cleanup and verified or restored after extraction.
 
 After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory by default. Use `--keep-snapshot-archive` to keep the ZIP after installation.
 
