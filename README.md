@@ -2,7 +2,7 @@
 
 ZHC-Installer is a console installer for bootstrapping a ZHCASH node from a ready blockchain Snapshot.
 
-It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallet files, and downloads the matching ZHCASH node release for the current OS.
+It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallet and `*.conf` configuration files, and downloads the matching ZHCASH node release for the current OS.
 
 ## Linux: install and start with one command
 
@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 
 This command downloads the latest official `zhc-installer-linux` release from GitHub, verifies it against the release `SHA256SUMS`, installs it as `/usr/local/bin/zhc-installer`, and starts it with `--no-wait-on-exit`.
 
-The installer stops a running ZHCASH node and replaces old blockchain data with the verified Snapshot while preserving `wallet.dat`, `wallet/`, `wallets/`, and `*.bak`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
+The installer stops a running ZHCASH node and replaces old blockchain data with the verified Snapshot while preserving `wallet.dat`, `wallet/`, `wallets/`, `*.bak`, and `*.conf`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
 
 On a Linux desktop, run the same installer without `sudo`:
 
@@ -36,10 +36,10 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 4. Stops running `zerohour-qt`, `zerohourd`, or `zerohour-cli` before changing blockchain data.
 5. Removes incomplete Snapshot partial files from previous runs.
 6. Reuses `zhcash-node-seed.zip` if it already exists and passes size + SHA256 verification.
-7. Removes old blockchain data while preserving wallet files and a verified Snapshot archive.
+7. Removes old blockchain data while preserving wallet files, `*.conf`, and a verified Snapshot archive.
 8. Downloads `zhcash-node-seed.zip` into the data directory only when a valid archive is not already present.
 9. Checks again that the node is not running before extraction.
-10. Removes extra data-directory files again while preserving wallet files and the downloaded Snapshot archive.
+10. Removes extra data-directory files again while preserving wallet files, `*.conf`, and the downloaded Snapshot archive.
 11. Extracts the Snapshot into the data directory.
 12. Verifies that `blocks/` and `chainstate/` exist after extraction.
 13. Deletes `zhcash-node-seed.zip` after successful extraction and verification, unless `--keep-snapshot-archive` is used.
@@ -101,7 +101,7 @@ zerohourd.exe
 zerohour-cli.exe
 ```
 
-If any of these processes are running, the installer stops them and waits until they exit. This prevents LevelDB/chainstate corruption while files are being replaced.
+If `zerohourd.service` is active on Linux, the installer stops the systemd unit first so that `Restart=always` cannot recreate blockchain files during cleanup. It then stops any remaining node processes and waits until they exit. This prevents LevelDB/chainstate corruption while files are being replaced.
 
 ### 3. Startup cleanup
 
@@ -131,6 +131,7 @@ wallet.dat
 wallet/
 wallets/
 *.bak
+*.conf
 ```
 
 It also preserves the active verified/downloaded Snapshot archive:
@@ -140,6 +141,8 @@ zhcash-node-seed.zip
 ```
 
 This cleanup is performed before download/extraction and again right before extraction. The second check protects against files created while the download was running.
+
+After each cleanup, the installer prints every file and directory that remains. Only wallets, wallet backups, `*.conf` files, and the active Snapshot archive may remain. If any other top-level entry survives cleanup, the installer stops before extraction and reports its path.
 
 Use `--no-clean` only when you explicitly want to keep existing non-wallet data.
 
@@ -334,6 +337,7 @@ wallet.dat
 wallet/
 wallets/
 *.bak
+*.conf
 ```
 
 Old blockchain/index/cache files are removed before Snapshot extraction unless `--no-clean` is used. At startup the installer deletes incomplete Snapshot partial files from previous runs:
@@ -349,6 +353,8 @@ During cleanup the installer preserves the active verified/downloaded Snapshot a
 ```text
 zhcash-node-seed.zip
 ```
+
+The installer lists the remaining files and directories after both cleanup passes. Snapshot extraction also refuses to overwrite preserved wallet, backup, or `*.conf` paths.
 
 After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory by default. Use `--keep-snapshot-archive` to keep the ZIP after installation.
 
@@ -517,10 +523,10 @@ When started without extra flags, the installer:
 3. Stops running ZHCASH node processes before changing blockchain data.
 4. Removes incomplete `zhcash-node-seed.zip.part` files from old runs.
 5. Reuses an existing `zhcash-node-seed.zip` only if size and SHA256 are correct.
-6. Cleans old blockchain data while preserving wallets and the active Snapshot ZIP.
+6. Cleans old blockchain data while preserving wallets, `*.conf`, and the active Snapshot ZIP.
 7. Downloads Snapshot from mirrors in order: Yandex, Mega, GitHub multipart, Zeroscan.
 8. Before extraction, checks again that the node is not running.
-9. Cleans the data directory again from extra files, preserving wallets and the Snapshot ZIP.
+9. Cleans the data directory again from extra files, preserving wallets, `*.conf`, and the Snapshot ZIP.
 10. Extracts Snapshot into the ZHCASH data directory.
 11. Verifies that `blocks/` and `chainstate/` exist.
 12. Deletes the Snapshot ZIP unless `--keep-snapshot-archive` is used.

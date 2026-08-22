@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -179,7 +180,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Removed %d old blockchain entries; wallet files were preserved.\n", removed)
+			fmt.Printf("Removed %d old blockchain entries; wallet and configuration files were preserved.\n", removed)
 		}
 		if useExistingSnapshot {
 			fmt.Println("Using existing verified Snapshot archive:", snapshotPath)
@@ -200,7 +201,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Removed %d extra data entries before extraction; wallet files and Snapshot archive were preserved.\n", removed)
+			fmt.Printf("Removed %d extra data entries before extraction; wallet, configuration, and Snapshot files were preserved.\n", removed)
 		}
 		fmt.Println()
 		fmt.Println("==> EXTRACT SNAPSHOT")
@@ -325,6 +326,9 @@ func isLinuxServer(goos string, env map[string]string) bool {
 }
 
 func stopRunningNodes(goos string) error {
+	if err := stopManagedNodeService(goos); err != nil {
+		return err
+	}
 	names := nodeProcessNames(goos)
 	fmt.Println("Checking running ZHCASH node processes...")
 	for _, name := range names {
@@ -355,6 +359,25 @@ func stopRunningNodes(goos string) error {
 			}
 		}
 	}
+	return nil
+}
+
+func stopManagedNodeService(goos string) error {
+	if goos != "linux" {
+		return nil
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return nil
+	}
+	if err := exec.Command("systemctl", "is-active", "--quiet", "zerohourd.service").Run(); err != nil {
+		return nil
+	}
+	fmt.Println("Stopping systemd service: zerohourd.service")
+	output, err := exec.Command("systemctl", "stop", "zerohourd.service").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to stop zerohourd.service: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	fmt.Println("Stopped systemd service: zerohourd.service")
 	return nil
 }
 
@@ -685,12 +708,58 @@ func cleanBlockchainData(dataDir string) (int, error) {
 		if preserveDataEntry(entry.Name(), entry.IsDir()) {
 			continue
 		}
+		fmt.Println("Removing old data:", entry.Name())
 		if err := os.RemoveAll(filepath.Join(clean, entry.Name())); err != nil {
 			return removed, err
 		}
 		removed++
 	}
+	remaining, err := os.ReadDir(clean)
+	if err != nil {
+		return removed, err
+	}
+	if err := printRemainingDataEntries(clean); err != nil {
+		return removed, err
+	}
+	for _, entry := range remaining {
+		if !preserveDataEntry(entry.Name(), entry.IsDir()) {
+			return removed, fmt.Errorf("old blockchain data still exists after cleanup: %s", filepath.Join(clean, entry.Name()))
+		}
+	}
 	return removed, nil
+}
+
+func printRemainingDataEntries(dataDir string) error {
+	found := false
+	fmt.Println("Files and directories remaining after cleanup:")
+	err := filepath.WalkDir(dataDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dataDir {
+			return nil
+		}
+		found = true
+		relative, err := filepath.Rel(dataDir, path)
+		if err != nil {
+			return err
+		}
+		kind := "file"
+		if entry.IsDir() {
+			kind = "directory"
+		} else if entry.Type()&os.ModeSymlink != 0 {
+			kind = "symlink"
+		}
+		fmt.Printf("- %s: %q\n", kind, filepath.ToSlash(relative))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		fmt.Println("- none")
+	}
+	return nil
 }
 
 func preserveDataEntry(name string, isDir bool) bool {
@@ -698,7 +767,7 @@ func preserveDataEntry(name string, isDir bool) bool {
 	if !isDir && (lower == strings.ToLower(defaultOutputName) || lower == strings.ToLower(defaultOutputName+".part")) {
 		return true
 	}
-	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak")) {
+	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak") || strings.HasSuffix(lower, ".conf")) {
 		return true
 	}
 	if isDir && (lower == "wallet" || lower == "wallets") {
@@ -777,6 +846,9 @@ func extractZipArchive(zipPath string, destination string) error {
 	defer reader.Close()
 
 	for _, item := range reader.File {
+		if preserveSnapshotTarget(item.Name) {
+			continue
+		}
 		target, err := safeJoin(destination, item.Name)
 		if err != nil {
 			return err
@@ -803,6 +875,20 @@ func extractZipArchive(zipPath string, destination string) error {
 		}
 	}
 	return nil
+}
+
+// preserveSnapshotTarget prevents a Snapshot from overwriting local wallets,
+// wallet backups, or node configuration. These entries are never blockchain
+// data and must always remain owned by the local installation.
+func preserveSnapshotTarget(name string) bool {
+	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
+	if clean == "." || clean == "/" {
+		return false
+	}
+	clean = strings.TrimPrefix(clean, "/")
+	top := strings.ToLower(strings.Split(clean, "/")[0])
+	return top == "wallet.dat" || top == "wallet" || top == "wallets" ||
+		strings.HasSuffix(top, ".bak") || strings.HasSuffix(top, ".conf")
 }
 
 func extractSingleFileFromZip(zipPath string, filename string, destination string) (string, error) {

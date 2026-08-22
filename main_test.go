@@ -133,10 +133,18 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "wallet.dat"), "wallet")
 	mustWrite(t, filepath.Join(dir, "wallet", "nested.dat"), "wallet-dir")
 	mustWrite(t, filepath.Join(dir, "wallets", "nested.dat"), "wallets-dir")
+	mustWrite(t, filepath.Join(dir, "zerohour.conf"), "rpcuser=local")
+	mustWrite(t, filepath.Join(dir, "custom.CONF"), "custom=local")
+	mustWrite(t, filepath.Join(dir, "wallet-copy.bak"), "backup")
 	mustWrite(t, filepath.Join(dir, defaultOutputName), "snapshot")
 	mustWrite(t, filepath.Join(dir, defaultOutputName+".part"), "partial")
 	mustWrite(t, filepath.Join(dir, "blocks", "blk00000.dat"), "block")
 	mustWrite(t, filepath.Join(dir, "chainstate", "000001.ldb"), "state")
+	mustWrite(t, filepath.Join(dir, "database", "log.0000000001"), "database")
+	mustWrite(t, filepath.Join(dir, "stateZHCASH", "state.dat"), "contract-state")
+	mustWrite(t, filepath.Join(dir, "indexes", "txindex", "000001.ldb"), "index")
+	mustWrite(t, filepath.Join(dir, "peers.dat"), "peers")
+	mustWrite(t, filepath.Join(dir, "mempool.dat"), "mempool")
 	mustWrite(t, filepath.Join(dir, "debug.log"), "log")
 
 	removed, err := cleanBlockchainData(dir)
@@ -150,6 +158,9 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 		filepath.Join(dir, "wallet.dat"),
 		filepath.Join(dir, "wallet", "nested.dat"),
 		filepath.Join(dir, "wallets", "nested.dat"),
+		filepath.Join(dir, "zerohour.conf"),
+		filepath.Join(dir, "custom.CONF"),
+		filepath.Join(dir, "wallet-copy.bak"),
 		filepath.Join(dir, defaultOutputName),
 		filepath.Join(dir, defaultOutputName+".part"),
 	} {
@@ -160,11 +171,90 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 	for _, removedPath := range []string{
 		filepath.Join(dir, "blocks"),
 		filepath.Join(dir, "chainstate"),
+		filepath.Join(dir, "database"),
+		filepath.Join(dir, "stateZHCASH"),
+		filepath.Join(dir, "indexes"),
+		filepath.Join(dir, "peers.dat"),
+		filepath.Join(dir, "mempool.dat"),
 		filepath.Join(dir, "debug.log"),
 	} {
 		if _, err := os.Stat(removedPath); !os.IsNotExist(err) {
 			t.Fatalf("expected path to be removed: %s", removedPath)
 		}
+	}
+}
+
+func TestExtractSnapshotDoesNotOverwriteWalletOrConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "snapshot.zip")
+	destination := filepath.Join(dir, "data")
+	mustWrite(t, filepath.Join(destination, "wallet.dat"), "local-wallet")
+	mustWrite(t, filepath.Join(destination, "wallet", "nested.dat"), "local-wallet-dir")
+	mustWrite(t, filepath.Join(destination, "zerohour.conf"), "rpcuser=local")
+	mustWrite(t, filepath.Join(destination, "wallet-copy.bak"), "local-backup")
+	createZip(t, archive, map[string]string{
+		"blocks/blk00000.dat":   "snapshot-block",
+		"chainstate/000001.ldb": "snapshot-state",
+		"wallet.dat":            "snapshot-wallet",
+		"wallet/nested.dat":     "snapshot-wallet-dir",
+		"./zerohour.conf":       "rpcuser=snapshot",
+		"wallet-copy.bak":       "snapshot-backup",
+	})
+
+	if err := extractZipArchive(archive, destination); err != nil {
+		t.Fatal(err)
+	}
+	for path, expected := range map[string]string{
+		"wallet.dat":          "local-wallet",
+		"wallet/nested.dat":   "local-wallet-dir",
+		"zerohour.conf":       "rpcuser=local",
+		"wallet-copy.bak":     "local-backup",
+		"blocks/blk00000.dat": "snapshot-block",
+	} {
+		content, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if string(content) != expected {
+			t.Fatalf("unexpected content for %s: got %q, want %q", path, content, expected)
+		}
+	}
+}
+
+func TestStopManagedNodeServiceIgnoresMissingSystemctl(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if err := stopManagedNodeService("linux"); err != nil {
+		t.Fatalf("missing systemctl should be ignored: %v", err)
+	}
+}
+
+func TestStopManagedNodeServiceStopsActiveService(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "systemctl.log")
+	systemctlPath := filepath.Join(dir, "systemctl")
+	mustWrite(t, systemctlPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$SYSTEMCTL_TEST_LOG"
+case "$1" in
+  is-active) exit 0 ;;
+  stop) exit 0 ;;
+esac
+exit 1
+`)
+	if err := os.Chmod(systemctlPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("SYSTEMCTL_TEST_LOG", logPath)
+
+	if err := stopManagedNodeService("linux"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(content); got != "is-active --quiet zerohourd.service\nstop zerohourd.service\n" {
+		t.Fatalf("unexpected systemctl calls: %q", got)
 	}
 }
 
