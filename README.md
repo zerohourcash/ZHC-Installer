@@ -205,6 +205,104 @@ If you want to keep the ZIP for reuse or testing, run:
 
 The installer updates `ZHCASH_DATA_DIR/zerohour.conf` after the Snapshot is installed. It preserves every unrelated line, existing RPC credentials, staking settings, custom peers, and other operator choices. Before changing an existing file it creates a timestamped owner-only `*.bak` copy. The active config is also restricted to owner read/write permissions.
 
+#### Exact configuration modification sequence
+
+The installer does not replace `zerohour.conf` with a fixed template. It performs a preserving, repeatable update in this order:
+
+1. Before blockchain cleanup, it reads every regular top-level `*.conf` file from the data directory into memory. This protects `zerohour.conf` and any additional operator configuration files from an archive containing files with the same names.
+2. It stops the running node or systemd service before changing blockchain data.
+3. It removes only recognized blockchain data. Wallets, configuration files, the Snapshot archive, and unrelated operator files are excluded from cleanup.
+4. It extracts the official Snapshot.
+5. Immediately after extraction, it compares every captured `*.conf` file byte-for-byte. A file that is missing or was replaced by the Snapshot is restored from the in-memory copy. This restoration is also attempted if extraction itself fails.
+6. It reads the resulting `zerohour.conf`, detects CPU/RAM/disk resources, and calculates the managed values.
+7. It updates active managed assignments in the global scope and in `[main]`. Settings inside `[test]` or other network sections are left untouched.
+8. If a managed key occurs more than once in the active mainnet configuration, every active occurrence is corrected to the same value. This prevents an older duplicate later in the file from overriding the safe value.
+9. Missing managed keys are inserted into the global section before the first named section. Existing blank lines, comments, inline comments, unrelated keys, custom peers, and ordering are retained wherever possible.
+10. It ensures at least one required local proxy value `addnode=127.0.0.1:3890` is present and does not add another when that exact value already exists. Other `addnode` entries are never removed or rewritten.
+11. If the resulting content differs, it writes the original bytes to an owner-only backup named like `zerohour.conf.before-installer-YYYYMMDD-HHMMSS.NNNNNNNNN.bak`, then writes the updated active file with mode `0600`.
+12. On a repeated run with the same resources and settings, the operation is idempotent: content is not rewritten and another backup is not created. File permissions are still corrected to `0600` if necessary.
+
+If no local `zerohour.conf` existed before extraction, the installer keeps any unrelated values supplied by the official Snapshot and adds/corrects the managed values. If neither the local data directory nor the Snapshot supplied one, a new private config is created. Other captured `*.conf` files are restored when needed but are not otherwise modified.
+
+Command-line arguments passed directly to `zerohourd` have higher precedence than values in `zerohour.conf`. The safeguards described here therefore apply to the normal installer-created systemd startup; an operator can still explicitly request maintenance with arguments such as `-reindex`.
+
+#### Which existing settings are preserved
+
+The updater leaves operator-controlled behavior unchanged unless a value conflicts with a mandatory networking, RPC, index, Snapshot-safety, or bounded-resource setting. Examples that remain unchanged include:
+
+```text
+staking
+reservebalance
+aggressive-staking
+mempoolexpiry
+minrelaytxfee
+debug
+custom addnode entries
+unknown or application-specific keys
+```
+
+Existing `rpcuser` and `rpcpassword` values are preserved. If `rpcuser` is missing, `zhcinstaller` is added. If `rpcpassword` is missing, a cryptographically random 32-byte value is generated and stored as 64 hexadecimal characters. The password is redacted from installer console output.
+
+The loopback RPC boundary is intentionally mandatory. Existing broader `rpcbind` or `rpcallowip` assignments are changed to `127.0.0.1`; exposing node RPC directly to a LAN or the Internet is not preserved. Remote applications should use the separately secured proxy layer.
+
+#### Before-and-after example
+
+Given this existing configuration:
+
+```text
+server=0 # old value
+rpcuser=operator
+rpcpassword=existing-secret
+port=8003
+staking=1
+dbcache=16384
+checkblocks=0
+rescan=1
+addnode=seed.example:38100
+custom-option=keep-me
+```
+
+on an 8-thread server with about 20 GiB RAM, the relevant result is:
+
+```text
+server=1 # old value
+rpcuser=operator
+rpcpassword=existing-secret
+port=38100
+staking=1
+dbcache=4096
+checkblocks=6
+rescan=0
+addnode=seed.example:38100
+custom-option=keep-me
+
+daemon=0
+rpcport=3889
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+listen=1
+txindex=1
+addrindex=1
+prune=0
+reindex=0
+reindex-chainstate=0
+deleteblockchaindata=0
+zapwallettxes=0
+salvagewallet=0
+upgradewallet=0
+checklevel=3
+blocksonly=0
+maxorphantx=100
+maxmempool=384
+maxconnections=96
+par=7
+rpcthreads=8
+rpcworkqueue=128
+addnode=127.0.0.1:3890
+```
+
+The exact position of newly inserted lines can differ when the original file contains named sections, but their active mainnet meaning is the same. The example deliberately shows that staking, credentials, custom peers, comments, and unknown settings survive while unsafe or obsolete managed values are corrected.
+
 Mandatory mainnet and local-proxy settings are added or corrected:
 
 ```text
