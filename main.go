@@ -39,8 +39,11 @@ const snapshotSHA256 = "20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2
 const dataDirVariable = "ZHCASH_DATA_DIR"
 const nodeDirVariable = "ZHCASH_NODE_DIR"
 const yandexURLVariable = "ZHCASH_YANDEX_SNAPSHOT_URL"
-const windowsNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-win64.zip"
-const linuxNodeURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0/zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
+const nodeReleaseBaseURL = "https://github.com/zerohourcash/zerohourcash/releases/download/v1.0.0"
+const windowsNodeArchive = "zhcash-evolution-1.0.0-win64.zip"
+const windowsNodeSHA256 = "a84a4811f78ad6f39de410145e454e5350e44480ee3708a2a751b5ebee86581c"
+const linuxNodeArchive = "zhcash-evolution-1.0.0-linux-x86_64.tar.gz"
+const linuxNodeSHA256 = "b6e23a66d3bb6159d68fd430de9414c3e2a0fab16d59944c436fcae08446e55b"
 const zerohourdServicePath = "/etc/systemd/system/zerohourd.service"
 
 var yandexURLPayload string
@@ -230,8 +233,12 @@ func run() error {
 		}
 	}
 
+	if _, err := configureOptimizedNode(*dataDir); err != nil {
+		return err
+	}
+
 	if !*skipNode {
-		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout); err != nil {
+		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout, linuxServer); err != nil {
 			return err
 		}
 		if linuxServer {
@@ -1177,7 +1184,73 @@ func verifySnapshotLayout(dataDir string) error {
 	return nil
 }
 
-func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTimeout time.Duration) error {
+type nodeReleaseAsset struct {
+	Filename string
+	SHA256   string
+}
+
+var ubuntuConsoleNodeReleases = map[string]nodeReleaseAsset{
+	"20.04": {Filename: "zhcash-evolution-1.0.0-linux-x86_64-ubuntu20.04-console.tar.gz", SHA256: "624ea08419afc928a6ab6d8b25a717af1656b77e24300d762dfaaa7ff490a4b4"},
+	"22.04": {Filename: "zhcash-evolution-1.0.0-linux-x86_64-ubuntu22.04-console.tar.gz", SHA256: "228d55481db7d3f40697a19e550abd02674503ad9b7da1c3165c7e0d8400b283"},
+	"24.04": {Filename: "zhcash-evolution-1.0.0-linux-x86_64-ubuntu24.04-console.tar.gz", SHA256: "8cd8622cce9bdfbd2f177b707bf191e9f3b2ba58c4444b96395722a0fa52ba00"},
+}
+
+func linuxNodeRelease(serverMode bool, osReleaseContent string) (nodeReleaseAsset, string) {
+	fallback := nodeReleaseAsset{Filename: linuxNodeArchive, SHA256: linuxNodeSHA256}
+	if !serverMode {
+		return fallback, "Linux GUI-compatible release"
+	}
+	values := parseOSRelease(osReleaseContent)
+	if strings.EqualFold(values["ID"], "ubuntu") {
+		if selected, ok := ubuntuConsoleNodeReleases[values["VERSION_ID"]]; ok {
+			return selected, "Ubuntu " + values["VERSION_ID"] + " console/server release"
+		}
+	}
+	return fallback, "compatible Linux fallback release"
+}
+
+func parseOSRelease(content string) map[string]string {
+	values := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+			value = value[1 : len(value)-1]
+		}
+		values[key] = value
+	}
+	return values
+}
+
+func readOSRelease() string {
+	content, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	return string(content)
+}
+
+func verifiedNodeReleaseDownload(ctx context.Context, asset nodeReleaseAsset, destination string, idleTimeout time.Duration) error {
+	sourceURL := nodeReleaseBaseURL + "/" + asset.Filename
+	if err := downloadPlainHTTPFile(ctx, sourceURL, destination, destination+".part", idleTimeout); err != nil {
+		return err
+	}
+	if err := verifySHA256File(destination, asset.SHA256); err != nil {
+		return fmt.Errorf("verify official node release %s: %w", asset.Filename, err)
+	}
+	fmt.Println("Node release SHA256 verified:", asset.SHA256)
+	return nil
+}
+
+func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTimeout time.Duration, linuxServer bool) error {
 	fmt.Println()
 	fmt.Println("==> INSTALL NODE RELEASE")
 	switch goos {
@@ -1187,8 +1260,9 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTi
 			return err
 		}
 		defer os.RemoveAll(tempDir)
-		archive := filepath.Join(tempDir, "zhcash-evolution-1.0.0-win64.zip")
-		if err := downloadPlainHTTPFile(ctx, windowsNodeURL, archive, archive+".part", idleTimeout); err != nil {
+		asset := nodeReleaseAsset{Filename: windowsNodeArchive, SHA256: windowsNodeSHA256}
+		archive := filepath.Join(tempDir, asset.Filename)
+		if err := verifiedNodeReleaseDownload(ctx, asset, archive, idleTimeout); err != nil {
 			return err
 		}
 		target, err := extractSingleFileFromZip(archive, "zerohour-qt.exe", nodeDir)
@@ -1198,8 +1272,10 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTi
 		fmt.Println("Windows node installed:", target)
 		return nil
 	case "linux":
-		archive := filepath.Join(nodeDir, "zhcash-evolution-1.0.0-linux-x86_64.tar.gz")
-		if err := downloadPlainHTTPFile(ctx, linuxNodeURL, archive, archive+".part", idleTimeout); err != nil {
+		asset, description := linuxNodeRelease(linuxServer, readOSRelease())
+		fmt.Printf("Selected %s: %s\n", description, asset.Filename)
+		archive := filepath.Join(nodeDir, asset.Filename)
+		if err := verifiedNodeReleaseDownload(ctx, asset, archive, idleTimeout); err != nil {
 			return err
 		}
 		if err := extractTarGzArchive(archive, nodeDir); err != nil {

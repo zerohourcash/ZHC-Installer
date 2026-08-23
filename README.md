@@ -43,8 +43,10 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 11. Extracts the Snapshot into the data directory.
 12. Verifies that `blocks/` and `chainstate/` exist after extraction.
 13. Deletes `zhcash-node-seed.zip` after successful extraction and verification, unless `--keep-snapshot-archive` is used.
-14. Downloads the ZHCASH Evolution node release for the current OS.
-15. Starts the node after installation:
+14. Preserves all existing node settings, secures RPC for local proxy access, enables transaction/address indexes, and tunes bounded performance settings for detected CPU/RAM.
+15. Ensures `addnode=127.0.0.1:3890` so a local `zhp2pproxy` native P2P overlay can be used without removing existing peers.
+16. Downloads the ZHCASH Evolution node release for the current OS.
+17. Starts the node after installation:
     - GUI systems start `zerohour-qt` if no node is already running.
     - Linux server/headless systems configure and restart `zerohourd.service`.
 
@@ -199,7 +201,63 @@ If you want to keep the ZIP for reuse or testing, run:
 ./zhc-installer-linux --keep-snapshot-archive
 ```
 
-### 8. Node release installation
+### 8. Node configuration and proxy integration
+
+The installer updates `ZHCASH_DATA_DIR/zerohour.conf` after the Snapshot is installed. It preserves every unrelated line, existing RPC credentials, staking settings, custom peers, and other operator choices. Before changing an existing file it creates a timestamped owner-only `*.bak` copy. The active config is also restricted to owner read/write permissions.
+
+Mandatory mainnet and local-proxy settings are added or corrected:
+
+```text
+server=1
+daemon=0
+rpcport=3889
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+port=38100
+listen=1
+txindex=1
+addrindex=1
+prune=0
+reindex=0
+reindex-chainstate=0
+rescan=0
+deleteblockchaindata=0
+zapwallettxes=0
+salvagewallet=0
+upgradewallet=0
+checkblocks=6
+checklevel=3
+blocksonly=0
+maxorphantx=100
+addnode=127.0.0.1:3890
+```
+
+`addrindex=1` is the Evolution option required by `getaddressutxos`, `getaddressbalance`, and address-history RPC methods. `txindex=1` enables arbitrary confirmed transaction lookup. `prune=0` is enforced because pruning is incompatible with the full transaction index.
+
+The installer operates in Snapshot-only mode during normal startup. It forces `reindex=0`, `reindex-chainstate=0`, `rescan=0`, and `deleteblockchaindata=0`, and disables destructive wallet-startup actions such as `zapwallettxes`, `salvagewallet`, and automatic wallet upgrade. Startup validation is bounded to the Evolution defaults `checkblocks=6` and `checklevel=3`; an old `checkblocks=0` cannot accidentally validate the entire chain at every start.
+
+RPC remains loopback-only. Existing `rpcuser` and `rpcpassword` are preserved. If either is missing, the installer uses `zhcinstaller` as the local RPC user and generates a random 256-bit hexadecimal password. Passwords are never printed in installer output.
+
+The installer detects logical CPU availability (including a Linux cgroup CPU quota), total/cgroup-limited RAM, and free disk space. It calculates bounded values for:
+
+```text
+dbcache
+maxmempool
+maxconnections
+par
+rpcthreads
+rpcworkqueue
+```
+
+For example, an 8-thread server with about 20 GiB RAM receives `dbcache=4096`, `maxmempool=384`, `maxconnections=96`, and `par=7`. A low-disk warning is shown below 30 GiB, but the installer never silently enables pruning.
+
+The current Evolution P2P port is `38100`; legacy `8003`/`3888` ports are not forced. Existing `addnode` lines are retained, while `127.0.0.1:3890` connects the node to the native ZHCASH tunnel exposed by `zhp2pproxy` when available. If the proxy is absent, the normal DNS/fixed seeds continue to work and the failed local peer is retried harmlessly.
+
+Older configurations may contain `spentindex`, `blockfilterindex`, or `limitfreerelay`. Evolution v1.0.0 does not register these options, so the installer does not add them. Existing lines remain preserved in the config and its backup. Likewise, `whitelistrelay` and `whitelistforcerelay` are boolean options, not IP-address fields; the installer does not create the old invalid `=127.0.0.1` form.
+
+The official Snapshot must contain the required transaction and address indexes. If it does not, the installer does not silently start a long reindex; the node will report the mismatch so that the Snapshot can be corrected or an operator can explicitly perform a one-time rebuild outside the normal installer flow.
+
+### 9. Node release installation
 
 After Snapshot installation, the installer downloads the ZHCASH Evolution `v1.0.0` node release.
 
@@ -229,7 +287,7 @@ The installer treats Linux as GUI mode when desktop-session variables such as `X
 
 On macOS, the Snapshot installation works, but the macOS node package is not available in ZHCASH `v1.0.0` yet.
 
-### 9. Node start
+### 10. Node start
 
 After the node release is installed, the installer checks whether a node is already running.
 
@@ -249,7 +307,7 @@ On Linux server/headless systems:
 
 Linux server/headless mode requires root privileges because it writes to `/etc/systemd/system`.
 
-### 10. Exit behavior
+### 11. Exit behavior
 
 By default, the installer waits for Enter before closing. This is useful on Windows, where a console window would otherwise close immediately.
 
@@ -436,11 +494,23 @@ The release ZIP is not left on the Desktop.
 
 ### Linux
 
-Downloads and extracts:
+On headless Ubuntu servers, the installer reads `/etc/os-release` and selects the matching console-only build:
+
+```text
+Ubuntu 20.04: zhcash-evolution-1.0.0-linux-x86_64-ubuntu20.04-console.tar.gz
+Ubuntu 22.04: zhcash-evolution-1.0.0-linux-x86_64-ubuntu22.04-console.tar.gz
+Ubuntu 24.04: zhcash-evolution-1.0.0-linux-x86_64-ubuntu24.04-console.tar.gz
+```
+
+Each selected archive is checked against the SHA-256 value published in the official `v1.0.0` `SHA256SUMS` asset before extraction. A checksum mismatch stops installation.
+
+Linux desktop systems, unsupported Ubuntu versions, and other Linux distributions use the compatible full fallback archive:
 
 ```text
 zhcash-evolution-1.0.0-linux-x86_64.tar.gz
 ```
+
+The fallback archive and Windows archive are also checked against pinned SHA-256 values before extraction.
 
 Linux GUI mode extracts it into the directory where the installer is run from, unless `--node-dir` is provided.
 
@@ -530,11 +600,12 @@ When started without extra flags, the installer:
 10. Extracts Snapshot into the ZHCASH data directory.
 11. Verifies that `blocks/` and `chainstate/` exist.
 12. Deletes the Snapshot ZIP unless `--keep-snapshot-archive` is used.
-13. Downloads and installs the ZHCASH Evolution node release.
-14. Starts the node:
+13. Preserves existing config content, creates a timestamped backup, enables local RPC/address indexes, tunes resource-dependent limits, and adds the local P2P proxy peer.
+14. Downloads and installs the ZHCASH Evolution node release.
+15. Starts the node:
     - GUI systems start `zerohour-qt` if no node is already running.
     - Linux server/headless systems configure and restart `zerohourd.service`.
-15. Waits for Enter before closing.
+16. Waits for Enter before closing.
 
 Default install:
 

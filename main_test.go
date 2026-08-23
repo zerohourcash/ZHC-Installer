@@ -272,7 +272,7 @@ func TestFinalSnapshotInstallationKeepsConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "zerohour.conf")
 	archivePath := filepath.Join(dir, defaultOutputName)
-	const originalConfig = "server=1\nrpcuser=local\nrpcpassword=secret\n"
+	const originalConfig = "server=0\nrpcuser=local\nrpcpassword=secret\nstaking=1\naddnode=seed.example:38100\n"
 	mustWrite(t, configPath, originalConfig)
 	mustWrite(t, filepath.Join(dir, "blocks", "old.dat"), "old-block")
 	mustWrite(t, filepath.Join(dir, "chainstate", "old.ldb"), "old-state")
@@ -301,6 +301,16 @@ func TestFinalSnapshotInstallationKeepsConfiguration(t *testing.T) {
 	if err := verifySnapshotLayout(dir); err != nil {
 		t.Fatal(err)
 	}
+	settings := []nodeConfigSetting{
+		{Key: "server", Value: "1"},
+		{Key: "txindex", Value: "1"},
+		{Key: "addrindex", Value: "1"},
+		{Key: "rpcuser", Value: "local"},
+		{Key: "rpcpassword", Value: "secret", Secret: true},
+	}
+	if _, err := updateNodeConfig(configPath, settings, []nodeConfigSetting{{Key: "addnode", Value: "127.0.0.1:3890"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	if err := removeSnapshotArchive(archivePath); err != nil {
 		t.Fatal(err)
 	}
@@ -309,11 +319,66 @@ func TestFinalSnapshotInstallationKeepsConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configuration missing after final Snapshot cleanup: %v", err)
 	}
-	if string(content) != originalConfig {
-		t.Fatalf("configuration changed after final Snapshot cleanup: %q", content)
+	for _, expected := range []string{
+		"server=1\n",
+		"rpcuser=local\n",
+		"rpcpassword=secret\n",
+		"staking=1\n",
+		"addnode=seed.example:38100\n",
+		"txindex=1\n",
+		"addrindex=1\n",
+		"addnode=127.0.0.1:3890\n",
+	} {
+		if !strings.Contains(string(content), expected) {
+			t.Fatalf("configuration missing preserved or managed value %q after final Snapshot cleanup: %q", expected, content)
+		}
 	}
 	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 		t.Fatalf("Snapshot archive should be removed at the end: %v", err)
+	}
+}
+
+func TestLinuxNodeReleaseSelectsUbuntuConsoleBuilds(t *testing.T) {
+	for version, expected := range map[string]string{
+		"20.04": "zhcash-evolution-1.0.0-linux-x86_64-ubuntu20.04-console.tar.gz",
+		"22.04": "zhcash-evolution-1.0.0-linux-x86_64-ubuntu22.04-console.tar.gz",
+		"24.04": "zhcash-evolution-1.0.0-linux-x86_64-ubuntu24.04-console.tar.gz",
+	} {
+		content := "ID=ubuntu\nVERSION_ID=\"" + version + "\"\n"
+		asset, description := linuxNodeRelease(true, content)
+		if asset.Filename != expected || len(asset.SHA256) != 64 {
+			t.Fatalf("Ubuntu %s selected unexpected asset: %#v", version, asset)
+		}
+		if !strings.Contains(description, version) {
+			t.Fatalf("Ubuntu %s selection description is unclear: %q", version, description)
+		}
+	}
+}
+
+func TestLinuxNodeReleaseUsesCompatibleFallbackOutsideSupportedServers(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		serverMode bool
+		osRelease  string
+	}{
+		{name: "Ubuntu GUI", serverMode: false, osRelease: "ID=ubuntu\nVERSION_ID=22.04\n"},
+		{name: "unsupported Ubuntu server", serverMode: true, osRelease: "ID=ubuntu\nVERSION_ID=26.04\n"},
+		{name: "Debian server", serverMode: true, osRelease: "ID=debian\nVERSION_ID=12\n"},
+		{name: "missing os-release", serverMode: true, osRelease: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			asset, _ := linuxNodeRelease(test.serverMode, test.osRelease)
+			if asset.Filename != linuxNodeArchive || asset.SHA256 != linuxNodeSHA256 {
+				t.Fatalf("unexpected fallback asset: %#v", asset)
+			}
+		})
+	}
+}
+
+func TestParseOSReleaseHandlesQuotesAndComments(t *testing.T) {
+	values := parseOSRelease("# generated\nID=ubuntu\nVERSION_ID='24.04'\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\ninvalid\n")
+	if values["ID"] != "ubuntu" || values["VERSION_ID"] != "24.04" || values["PRETTY_NAME"] != "Ubuntu 24.04 LTS" {
+		t.Fatalf("unexpected os-release values: %#v", values)
 	}
 }
 
