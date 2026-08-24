@@ -163,7 +163,7 @@ func TestOptimizedNodeSettingsForRepresentativeServers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			values := settingValues(optimizedNodeSettings(test.resources))
 			for key, expected := range map[string]string{
-				"server": "1", "daemon": "0", "rpcport": "3889", "rpcbind": "127.0.0.1",
+				"server": "1", "daemon": "0", "debug": "1", "rpcport": "3889", "rpcbind": "127.0.0.1",
 				"rpcallowip": "127.0.0.1", "port": "38100", "listen": "1", "txindex": "1",
 				"addrindex": "1", "prune": "0", "dbcache": test.dbCache, "maxmempool": test.mempool,
 				"reindex": "0", "reindex-chainstate": "0", "rescan": "0", "deleteblockchaindata": "0",
@@ -265,13 +265,16 @@ deleteblockchaindata=1
 		"whitelistrelay=127.0.0.1\n",
 		"whitelistforcerelay=127.0.0.1\n",
 		"aggressive-staking=1\n",
-		"debug = 0\n",
 		"addnode=212.34.129.167:8003\n",
 		"addnode=185.250.207.235:38100\n",
 	} {
 		if !strings.Contains(updated, preserved) {
 			t.Fatalf("operator setting was lost: %q\n%s", preserved, updated)
 		}
+	}
+	debugValue, debugFound := activeMainConfigValue(updated, "debug")
+	if !debugFound || debugValue != "1" || strings.Count(updated, "debug") != 1 {
+		t.Fatalf("debug logging was not enabled exactly once:\n%s", updated)
 	}
 	if strings.Count(updated, "addnode=") != 9 {
 		t.Fatalf("expected all eight legacy peers plus local proxy peer:\n%s", updated)

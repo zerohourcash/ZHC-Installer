@@ -49,6 +49,8 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 17. Starts the node after installation:
     - GUI systems start `zerohour-qt` if no node is already running.
     - Linux server/headless systems configure and restart `zerohourd.service`.
+18. Waits for local RPC height and best-block readiness instead of treating process creation as success.
+19. Logs a sanitized success or 10-minute timeout report through the Wallet PWA HTTPS feedback channel and Telegram administration flow.
 
 ## Detailed installation flow
 
@@ -236,7 +238,6 @@ reservebalance
 aggressive-staking
 mempoolexpiry
 minrelaytxfee
-debug
 custom addnode entries
 unknown or application-specific keys
 ```
@@ -266,6 +267,7 @@ on an 8-thread server with about 20 GiB RAM, the relevant result is:
 
 ```text
 server=1 # old value
+debug=1
 rpcuser=operator
 rpcpassword=existing-secret
 port=38100
@@ -308,6 +310,7 @@ Mandatory mainnet and local-proxy settings are added or corrected:
 ```text
 server=1
 daemon=0
+debug=1
 rpcport=3889
 rpcbind=127.0.0.1
 rpcallowip=127.0.0.1
@@ -333,6 +336,8 @@ addnode=127.0.0.1:3890
 `addrindex=1` is the Evolution option required by `getaddressutxos`, `getaddressbalance`, and address-history RPC methods. `txindex=1` enables arbitrary confirmed transaction lookup. `prune=0` is enforced because pruning is incompatible with the full transaction index.
 
 The installer operates in Snapshot-only mode during normal startup. It forces `reindex=0`, `reindex-chainstate=0`, `rescan=0`, and `deleteblockchaindata=0`, and disables destructive wallet-startup actions such as `zapwallettxes`, `salvagewallet`, and automatic wallet upgrade. Startup validation is bounded to the Evolution defaults `checkblocks=6` and `checklevel=3`; an old `checkblocks=0` cannot accidentally validate the entire chain at every start.
+
+`debug=1` is mandatory. It keeps `debug.log` detailed enough to diagnose a node that remains on `Initializing ZHC network`. Existing `debug=0` assignments in the active mainnet configuration are changed to `debug=1`; named test-network sections remain untouched.
 
 RPC remains loopback-only. Existing `rpcuser` and `rpcpassword` are preserved. If either is missing, the installer uses `zhcinstaller` as the local RPC user and generates a random 256-bit hexadecimal password. Passwords are never printed in installer output.
 
@@ -392,7 +397,7 @@ After the node release is installed, the installer checks whether a node is alre
 On GUI systems:
 
 - if a node is already running, the installer does not start another instance;
-- if no node is running, it finds `zerohour-qt` / `zerohour-qt.exe` inside `ZHCASH_NODE_DIR` and starts it.
+- if no node is running, it finds `zerohour-qt` / `zerohour-qt.exe` inside `ZHCASH_NODE_DIR` and starts it with the resolved `-datadir`.
 
 On Linux server/headless systems:
 
@@ -404,6 +409,20 @@ On Linux server/headless systems:
 - the service uses `Restart=always` and `RestartSec=10`.
 
 Linux server/headless mode requires root privileges because it writes to `/etc/systemd/system`.
+
+The installer does not treat process creation as a successful startup. After launching either the GUI node or the systemd service, it waits up to 10 minutes for the loopback RPC configured in `zerohour.conf`. Readiness requires successful `getblockcount` and `getbestblockhash` responses; `getconnectioncount` is included in the result. A progress line is printed at least every 15 seconds, so long initialization remains visibly active.
+
+When RPC becomes ready, the installer sends a small success event through the same HTTPS feedback channel used by ZHC Wallet PWA: `https://wallet.zeroscan.st/feedback`. The administrator receives a Telegram message containing installer version, OS/architecture, startup time, height, peer count, and best block hash.
+
+If RPC is still unavailable after 10 minutes, the installer:
+
+1. reads only the tail of `debug.log` and `vm.log` (at most 24 KiB from each);
+2. removes RPC credentials, passwords, tokens, private-key markers, WIF values, and the local home path;
+3. stores a private JSON report under the platform user configuration directory in `ZHCASH-Installer/diagnostics`;
+4. sends the same sanitized report to `https://wallet.zeroscan.st/feedback` for server logging and a Telegram alert;
+5. returns an error instead of printing a false successful completion.
+
+The full wallet file, `wallet.dat`, `zerohour.conf`, RPC credentials, private keys, and complete unbounded logs are never uploaded. Telemetry uses HTTPS only and is non-fatal when the node itself started successfully. Operators who must disable it can pass `--no-install-telemetry`.
 
 ### 11. Exit behavior
 
@@ -703,7 +722,9 @@ When started without extra flags, the installer:
 15. Starts the node:
     - GUI systems start `zerohour-qt` if no node is already running.
     - Linux server/headless systems configure and restart `zerohourd.service`.
-16. Waits for Enter before closing.
+16. Waits up to 10 minutes for local RPC height and best-block readiness.
+17. Sends a sanitized success or timeout event through the Wallet PWA HTTPS feedback channel.
+18. Waits for Enter before closing.
 
 Default install:
 
@@ -726,6 +747,13 @@ Download reliability options:
 ```bash
 ./zhc-installer-linux --idle-timeout 5m
 ./zhc-installer-linux --source-retries 2
+```
+
+Node startup verification options:
+
+```bash
+./zhc-installer-linux --node-start-timeout 10m
+./zhc-installer-linux --no-install-telemetry
 ```
 
 Start downloads from zero:

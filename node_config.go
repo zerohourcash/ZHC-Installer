@@ -231,6 +231,7 @@ func optimizedNodeSettings(resources systemResources) []nodeConfigSetting {
 	return []nodeConfigSetting{
 		{Key: "server", Value: "1"},
 		{Key: "daemon", Value: "0"},
+		{Key: "debug", Value: "1"},
 		{Key: "rpcport", Value: "3889"},
 		{Key: "rpcbind", Value: "127.0.0.1"},
 		{Key: "rpcallowip", Value: "127.0.0.1"},

@@ -99,6 +99,8 @@ func run() error {
 	keepSnapshotArchive := flag.Bool("keep-snapshot-archive", false, "keep zhcash-node-seed.zip after successful extraction")
 	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "switch/retry when download makes no progress for this duration")
 	sourceRetries := flag.Int("source-retries", 2, "retry attempts on the same source before switching to the next mirror")
+	nodeStartTimeout := flag.Duration("node-start-timeout", defaultNodeStartupTimeout, "maximum time to wait for the installed node RPC to become ready")
+	noInstallTelemetry := flag.Bool("no-install-telemetry", false, "disable installer success/failure telemetry")
 	waitOnExit := flag.Bool("wait-on-exit", true, "wait for Enter before exiting")
 	noWaitOnExit := flag.Bool("no-wait-on-exit", false, "do not wait for Enter before exiting")
 	env := getenvMap()
@@ -238,16 +240,38 @@ func run() error {
 	}
 
 	if !*skipNode {
+		nodeStartedAt := time.Now()
+		var startErr error
 		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout, linuxServer); err != nil {
 			return err
 		}
 		if linuxServer {
-			if err := configureZerohourdSystemd(*dataDir, *nodeDir); err != nil {
-				return err
-			}
+			startErr = configureZerohourdSystemd(*dataDir, *nodeDir)
 		} else {
-			if err := startNodeIfNotRunning(runtime.GOOS, *nodeDir); err != nil {
-				return err
+			startErr = startNodeIfNotRunning(runtime.GOOS, *nodeDir, *dataDir)
+		}
+		if startErr != nil {
+			return reportInstallerNodeFailure(*dataDir, nodeStartedAt, startErr, *noInstallTelemetry)
+		}
+
+		fmt.Println()
+		fmt.Println("==> VERIFY ZHCASH NODE STARTUP")
+		fmt.Printf("Waiting up to %s for local RPC readiness. The installer remains responsive while the node initializes.\n", *nodeStartTimeout)
+		ready, readyErr := waitForLocalNodeReady(context.Background(), *dataDir, *nodeStartTimeout, defaultNodeStartupPollInterval, os.Stdout)
+		if readyErr != nil {
+			return reportInstallerNodeFailure(*dataDir, nodeStartedAt, readyErr, *noInstallTelemetry)
+		}
+		elapsed := time.Since(nodeStartedAt)
+		fmt.Printf("ZHCASH node is ready: height=%d, connections=%d, best block=%s, startup=%s.\n", ready.BlockHeight, ready.Connections, ready.BestBlockHash, elapsed.Round(time.Second))
+		if !*noInstallTelemetry {
+			payload := newInstallerTelemetryPayload("success", elapsed, ready, nil, nil)
+			telemetryCtx, telemetryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			telemetryErr := sendInstallerTelemetry(telemetryCtx, defaultInstallerTelemetryURL, payload)
+			telemetryCancel()
+			if telemetryErr != nil {
+				fmt.Println("WARNING: node is ready, but installation telemetry could not be delivered:", telemetryErr)
+			} else {
+				fmt.Println("Installation success was logged through wallet.zeroscan.st.")
 			}
 		}
 	}
@@ -441,7 +465,7 @@ func terminateProcess(goos string, name string) error {
 	return nil
 }
 
-func startNodeIfNotRunning(goos string, nodeDir string) error {
+func startNodeIfNotRunning(goos string, nodeDir string, dataDir string) error {
 	fmt.Println()
 	fmt.Println("==> START ZHCASH NODE")
 	running, err := isAnyNodeRunning(goos)
@@ -460,7 +484,7 @@ func startNodeIfNotRunning(goos string, nodeDir string) error {
 		}
 		return err
 	}
-	cmd := exec.Command(executable)
+	cmd := exec.Command(executable, "-datadir="+dataDir)
 	cmd.Dir = filepath.Dir(executable)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -470,6 +494,36 @@ func startNodeIfNotRunning(goos string, nodeDir string) error {
 	}
 	fmt.Println("Started:", executable)
 	return nil
+}
+
+func reportInstallerNodeFailure(dataDir string, startedAt time.Time, startupErr error, telemetryDisabled bool) error {
+	elapsed := time.Since(startedAt)
+	status := "failure"
+	if errors.Is(startupErr, errNodeStartupTimeout) {
+		status = "timeout"
+	}
+	payload := newInstallerTelemetryPayload(status, elapsed, nodeReadiness{}, startupErr, collectNodeDiagnostics(dataDir))
+	diagnosticDir, diagnosticDirErr := installerDiagnosticDirectory()
+	if diagnosticDirErr != nil {
+		diagnosticDir = os.TempDir()
+	}
+	reportPath, reportErr := writeInstallerDiagnosticReport(diagnosticDir, payload)
+	if reportErr != nil {
+		fmt.Println("WARNING: could not save local installer diagnostics:", reportErr)
+	} else {
+		fmt.Println("Saved sanitized installer diagnostics:", reportPath)
+	}
+	if !telemetryDisabled {
+		telemetryCtx, telemetryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		telemetryErr := sendInstallerTelemetry(telemetryCtx, defaultInstallerTelemetryURL, payload)
+		telemetryCancel()
+		if telemetryErr != nil {
+			fmt.Println("WARNING: installer diagnostics could not be delivered to wallet.zeroscan.st:", telemetryErr)
+		} else {
+			fmt.Println("Sanitized startup diagnostics were sent through wallet.zeroscan.st for administrator review.")
+		}
+	}
+	return startupErr
 }
 
 func findNodeExecutable(goos string, nodeDir string) (string, error) {
