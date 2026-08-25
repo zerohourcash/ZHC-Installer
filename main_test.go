@@ -133,6 +133,8 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "wallet.dat"), "wallet")
 	mustWrite(t, filepath.Join(dir, "wallet", "nested.dat"), "wallet-dir")
 	mustWrite(t, filepath.Join(dir, "wallets", "nested.dat"), "wallets-dir")
+	mustWrite(t, filepath.Join(dir, "zhp2pproxy", "proxy.json"), "proxy-config")
+	mustWrite(t, filepath.Join(dir, "zhp2pproxy", "identity.key"), "proxy-identity")
 	mustWrite(t, filepath.Join(dir, "zerohour.conf"), "rpcuser=local")
 	mustWrite(t, filepath.Join(dir, "custom.CONF"), "custom=local")
 	mustWrite(t, filepath.Join(dir, "wallet-copy.bak"), "backup")
@@ -158,6 +160,8 @@ func TestCleanBlockchainDataPreservesWalletFiles(t *testing.T) {
 		filepath.Join(dir, "wallet.dat"),
 		filepath.Join(dir, "wallet", "nested.dat"),
 		filepath.Join(dir, "wallets", "nested.dat"),
+		filepath.Join(dir, "zhp2pproxy", "proxy.json"),
+		filepath.Join(dir, "zhp2pproxy", "identity.key"),
 		filepath.Join(dir, "zerohour.conf"),
 		filepath.Join(dir, "custom.CONF"),
 		filepath.Join(dir, "wallet-copy.bak"),
@@ -190,6 +194,7 @@ func TestExtractSnapshotDoesNotOverwriteWalletOrConfiguration(t *testing.T) {
 	destination := filepath.Join(dir, "data")
 	mustWrite(t, filepath.Join(destination, "wallet.dat"), "local-wallet")
 	mustWrite(t, filepath.Join(destination, "wallet", "nested.dat"), "local-wallet-dir")
+	mustWrite(t, filepath.Join(destination, "zhp2pproxy", "proxy.json"), "local-proxy-config")
 	mustWrite(t, filepath.Join(destination, "zerohour.conf"), "rpcuser=local")
 	mustWrite(t, filepath.Join(destination, "wallet-copy.bak"), "local-backup")
 	createZip(t, archive, map[string]string{
@@ -197,6 +202,7 @@ func TestExtractSnapshotDoesNotOverwriteWalletOrConfiguration(t *testing.T) {
 		"chainstate/000001.ldb": "snapshot-state",
 		"wallet.dat":            "snapshot-wallet",
 		"wallet/nested.dat":     "snapshot-wallet-dir",
+		"zhp2pproxy/proxy.json": "snapshot-proxy-config",
 		"./zerohour.conf":       "rpcuser=snapshot",
 		"wallet-copy.bak":       "snapshot-backup",
 	})
@@ -205,11 +211,12 @@ func TestExtractSnapshotDoesNotOverwriteWalletOrConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, expected := range map[string]string{
-		"wallet.dat":          "local-wallet",
-		"wallet/nested.dat":   "local-wallet-dir",
-		"zerohour.conf":       "rpcuser=local",
-		"wallet-copy.bak":     "local-backup",
-		"blocks/blk00000.dat": "snapshot-block",
+		"wallet.dat":            "local-wallet",
+		"wallet/nested.dat":     "local-wallet-dir",
+		"zhp2pproxy/proxy.json": "local-proxy-config",
+		"zerohour.conf":         "rpcuser=local",
+		"wallet-copy.bak":       "local-backup",
+		"blocks/blk00000.dat":   "snapshot-block",
 	} {
 		content, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(path)))
 		if err != nil {

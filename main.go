@@ -894,7 +894,7 @@ func preserveDataEntry(name string, isDir bool) bool {
 	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak") || strings.HasSuffix(lower, ".conf")) {
 		return true
 	}
-	if isDir && (lower == "wallet" || lower == "wallets") {
+	if isDir && (lower == "wallet" || lower == "wallets" || lower == "zhp2pproxy") {
 		return true
 	}
 	return false
@@ -1002,8 +1002,9 @@ func extractZipArchive(zipPath string, destination string) error {
 }
 
 // preserveSnapshotTarget prevents a Snapshot from overwriting local wallets,
-// wallet backups, or node configuration. These entries are never blockchain
-// data and must always remain owned by the local installation.
+// wallet backups, node configuration, or the local zhp2pproxy installation.
+// These entries are never blockchain data and must always remain owned by the
+// local installation.
 func preserveSnapshotTarget(name string) bool {
 	clean := path.Clean(strings.ReplaceAll(name, "\\", "/"))
 	if clean == "." || clean == "/" {
@@ -1011,7 +1012,7 @@ func preserveSnapshotTarget(name string) bool {
 	}
 	clean = strings.TrimPrefix(clean, "/")
 	top := strings.ToLower(strings.Split(clean, "/")[0])
-	return top == "wallet.dat" || top == "wallet" || top == "wallets" ||
+	return top == "wallet.dat" || top == "wallet" || top == "wallets" || top == "zhp2pproxy" ||
 		strings.HasSuffix(top, ".bak") || strings.HasSuffix(top, ".conf")
 }
 
