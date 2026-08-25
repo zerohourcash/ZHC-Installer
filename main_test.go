@@ -78,7 +78,7 @@ func TestResolveSourcesSingleSource(t *testing.T) {
 	}
 }
 
-func TestConfiguredYandexURLUsesObfuscatedPayloadBeforeEnvironment(t *testing.T) {
+func TestConfiguredYandexURLUsesEnvironmentOverride(t *testing.T) {
 	oldPayload, oldKey := yandexURLPayload, yandexURLKey
 	defer func() {
 		yandexURLPayload, yandexURLKey = oldPayload, oldKey
@@ -89,23 +89,39 @@ func TestConfiguredYandexURLUsesObfuscatedPayloadBeforeEnvironment(t *testing.T)
 	yandexURLPayload = payload
 	yandexURLKey = key
 
-	if got := configuredYandexURL(); got != "https://example.invalid/embedded-link" {
+	if got := configuredYandexURL(); got != "https://example.invalid/env-link" {
 		t.Fatalf("unexpected configured yandex URL: %s", got)
 	}
 }
 
-func TestConfiguredYandexURLFallsBackToEnvironment(t *testing.T) {
+func TestConfiguredYandexURLFallsBackToEmbeddedPayload(t *testing.T) {
 	oldPayload, oldKey := yandexURLPayload, yandexURLKey
 	defer func() {
 		yandexURLPayload, yandexURLKey = oldPayload, oldKey
 	}()
 
+	t.Setenv(yandexURLVariable, "")
+	payload, key := obfuscateForTest("https://example.invalid/embedded-link", "test-key")
+	yandexURLPayload = payload
+	yandexURLKey = key
+
+	if got := configuredYandexURL(); got != "https://example.invalid/embedded-link" {
+		t.Fatalf("unexpected configured yandex URL: %s", got)
+	}
+}
+
+func TestConfiguredYandexURLFallsBackToOfficialMirror(t *testing.T) {
+	oldPayload, oldKey := yandexURLPayload, yandexURLKey
+	defer func() {
+		yandexURLPayload, yandexURLKey = oldPayload, oldKey
+	}()
+
+	t.Setenv(yandexURLVariable, "")
 	yandexURLPayload = ""
 	yandexURLKey = ""
-	t.Setenv(yandexURLVariable, "https://example.invalid/env-link")
 
-	if got := configuredYandexURL(); got != "https://example.invalid/env-link" {
-		t.Fatalf("unexpected configured yandex URL: %s", got)
+	if got := configuredYandexURL(); got != defaultYandexURL {
+		t.Fatalf("unexpected default yandex URL: %s", got)
 	}
 }
 

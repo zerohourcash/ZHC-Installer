@@ -115,7 +115,7 @@ func TestWaitForLocalNodeReadyReturnsTypedTimeout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "zerohour.conf"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := waitForLocalNodeReady(context.Background(), dir, 30*time.Millisecond, 5*time.Millisecond, io.Discard)
+	_, err := waitForLocalNodeReady(context.Background(), dir, 100*time.Millisecond, 5*time.Millisecond, io.Discard)
 	if !errors.Is(err, errNodeStartupTimeout) || !strings.Contains(err.Error(), "Loading block index") {
 		t.Fatalf("unexpected startup timeout: %v", err)
 	}

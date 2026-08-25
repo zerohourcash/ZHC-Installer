@@ -21,7 +21,7 @@ import (
 const defaultInstallerTelemetryURL = "https://wallet.zeroscan.st/feedback"
 const defaultNodeStartupTimeout = 10 * time.Minute
 const defaultNodeStartupPollInterval = 5 * time.Second
-const installerVersion = "0.2.14"
+const installerVersion = "0.2.15"
 const maxNodeDiagnosticTailBytes int64 = 24 * 1024
 
 var errNodeStartupTimeout = errors.New("node startup timeout")
@@ -199,7 +199,12 @@ func waitForLocalNodeReady(ctx context.Context, dataDir string, timeout time.Dur
 		if probeErr == nil {
 			return ready, nil
 		}
-		lastErr = probeErr
+		// Keep the last useful RPC response instead of replacing it with the
+		// outer timeout that ends the final in-flight probe. This makes timeout
+		// diagnostics retain messages such as "Loading block index".
+		if lastErr == nil || (!errors.Is(probeErr, context.DeadlineExceeded) && !errors.Is(probeErr, context.Canceled)) {
+			lastErr = probeErr
+		}
 		now := time.Now()
 		if lastPrintedAt.IsZero() || now.Sub(lastPrintedAt) >= 15*time.Second {
 			fmt.Fprintf(output, "Waiting for local ZHC RPC: elapsed %s; last status: %s\n", now.Sub(startedAt).Round(time.Second), sanitizeDiagnosticText(probeErr.Error()))

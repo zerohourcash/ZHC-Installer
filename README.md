@@ -540,7 +540,7 @@ After successful extraction and verification, `zhcash-node-seed.zip` is deleted 
 Default source order:
 
 ```text
-yandex if configured → mega → github multipart → zeroscan
+yandex → mega → github multipart → zeroscan
 ```
 
 All mirrors use one shared partial file:
@@ -562,6 +562,14 @@ SHA256: 20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7
 ```text
 https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg
 ```
+
+### Yandex Disk
+
+```text
+https://disk.yandex.ru/d/qOCnBFRenyW-OQ
+```
+
+The official Yandex public-resource URL is built into every release and source build. `ZHCASH_YANDEX_SNAPSHOT_URL` is optional and only overrides this URL for a custom mirror.
 
 ### Zeroscan direct HTTP
 
@@ -585,7 +593,7 @@ zhcash-node-seed.zip.part10
 
 The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256. New installer releases should not duplicate these Snapshot parts unless the Snapshot itself changes.
 
-Yandex Disk is supported, but its URL is not published in this repository. Official release binaries may include an obfuscated build-time Yandex URL. If you build from source, provide a Yandex public-resource URL through:
+To explicitly override the official Yandex mirror, provide another public-resource URL through:
 
 ```bash
 export ZHCASH_YANDEX_SNAPSHOT_URL='https://disk.yandex.ru/d/...'

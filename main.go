@@ -30,6 +30,7 @@ import (
 )
 
 const defaultMegaLink = "https://mega.nz/file/tzICFL5C#8avoKJxzjLjfgj2SbhBrqMo-FCqt-i2myM1XQZy49Gg"
+const defaultYandexURL = "https://disk.yandex.ru/d/qOCnBFRenyW-OQ"
 const defaultGithubReleaseBaseURL = "https://github.com/zerohourcash/ZHC-Installer/releases/download/v0.2.2"
 const defaultGithubPartCount = 10
 const defaultZeroscanURL = "https://zeroscan.io/installer/downloads/zhcash-node-seed.zip"
@@ -1123,10 +1124,13 @@ func writeFileFromReader(path string, reader io.Reader, mode os.FileMode) error 
 }
 
 func configuredYandexURL() string {
+	if configured := strings.TrimSpace(os.Getenv(yandexURLVariable)); configured != "" {
+		return configured
+	}
 	if decoded, err := decodeObfuscatedYandexURL(yandexURLPayload, yandexURLKey); err == nil && decoded != "" {
 		return decoded
 	}
-	return os.Getenv(yandexURLVariable)
+	return defaultYandexURL
 }
 
 func decodeObfuscatedYandexURL(payload string, key string) (string, error) {
