@@ -12,7 +12,7 @@ For a Linux server or headless machine, run:
 curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | sudo bash
 ```
 
-This command downloads the latest official `zhc-installer-linux` release from GitHub, verifies it against the release `SHA256SUMS`, installs it as `/usr/local/bin/zhc-installer`, and starts it with `--no-wait-on-exit`.
+This command downloads the latest official `zhc-installer-linux` release from GitHub, verifies it against the immutable SHA-256 asset digest returned by the official GitHub Releases API, installs it as `/usr/local/bin/zhc-installer`, and starts it with `--no-wait-on-exit`.
 
 The installer stops a running ZHCASH node and replaces old blockchain data with the verified Snapshot while preserving `wallet.dat`, `wallet/`, `wallets/`, `zhp2pproxy/`, `*.bak`, and `*.conf`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
 
@@ -709,6 +709,18 @@ Latest release:
 https://github.com/zerohourcash/ZHC-Installer/releases
 ```
 
+Each installer release uploads exactly two executable assets in this order:
+
+1. `zhc-installer-windows.exe` — Windows x64 executable.
+2. `zhc-installer-linux` — Linux x86_64 executable binary.
+
+No macOS binary, checksum manifest, build log, archive, or intermediate build
+file is uploaded. GitHub itself always adds the generated `Source code (zip)`
+and `Source code (tar.gz)` links to every tagged release; repository owners
+cannot remove or reorder those two automatic links. The Linux bootstrap verifies
+`zhc-installer-linux` through the SHA-256 digest in GitHub's asset metadata, so a
+separate `SHA256SUMS` release asset is unnecessary.
+
 ## Help
 
 ### Step-by-step behavior
@@ -815,7 +827,6 @@ Cross-build examples:
 ```bash
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-windows.exe .
 GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-linux .
-GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o zhc-installer-darwin .
 ```
 
 Obfuscation prevents casual extraction with tools like `strings`, but it is not a cryptographic secret once a binary is public.

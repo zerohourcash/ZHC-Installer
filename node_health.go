@@ -21,7 +21,7 @@ import (
 const defaultInstallerTelemetryURL = "https://wallet.zeroscan.st/feedback"
 const defaultNodeStartupTimeout = 10 * time.Minute
 const defaultNodeStartupPollInterval = 5 * time.Second
-const installerVersion = "0.2.15"
+const installerVersion = "0.2.16"
 const maxNodeDiagnosticTailBytes int64 = 24 * 1024
 
 var errNodeStartupTimeout = errors.New("node startup timeout")

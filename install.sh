@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 readonly RELEASE_BASE_URL="https://github.com/zerohourcash/ZHC-Installer/releases/latest/download"
+readonly RELEASE_API_URL="https://api.github.com/repos/zerohourcash/ZHC-Installer/releases/latest"
 readonly ASSET_NAME="zhc-installer-linux"
 
 log() {
@@ -46,7 +47,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 binary_path="${tmp_dir}/${ASSET_NAME}"
-checksums_path="${tmp_dir}/SHA256SUMS"
+release_metadata_path="${tmp_dir}/release.json"
 
 log "downloading the latest official Linux release"
 curl --fail --silent --show-error --location \
@@ -55,15 +56,26 @@ curl --fail --silent --show-error --location \
   --output "${binary_path}"
 curl --fail --silent --show-error --location \
   --retry 3 --retry-delay 2 --connect-timeout 20 \
-  "${RELEASE_BASE_URL}/SHA256SUMS" \
-  --output "${checksums_path}"
+  --header 'Accept: application/vnd.github+json' \
+  --header 'User-Agent: ZHC-Installer-bootstrap' \
+  "${RELEASE_API_URL}" \
+  --output "${release_metadata_path}"
 
-expected_sha256="$(awk -v asset="${ASSET_NAME}" '$2 == asset { print $1; exit }' "${checksums_path}")"
-[[ "${expected_sha256}" =~ ^[0-9a-fA-F]{64}$ ]] || fail "SHA256SUMS does not contain a valid checksum for ${ASSET_NAME}"
+expected_sha256="$(
+  tr ',' '\n' <"${release_metadata_path}" | awk -F'"' -v asset="${ASSET_NAME}" '
+    index($0, "\"name\":\"" asset "\"") { wanted = 1 }
+    wanted && $2 == "digest" && $4 ~ /^sha256:[0-9a-fA-F]{64}$/ {
+      sub(/^sha256:/, "", $4)
+      print $4
+      exit
+    }
+  '
+)"
+[[ "${expected_sha256}" =~ ^[0-9a-fA-F]{64}$ ]] || fail "GitHub release metadata does not contain a valid SHA256 digest for ${ASSET_NAME}"
 
 actual_sha256="$(sha256sum "${binary_path}" | awk '{ print $1 }')"
 [[ "${actual_sha256}" == "${expected_sha256}" ]] || fail "downloaded binary checksum mismatch"
-log "SHA256 verified: ${actual_sha256}"
+log "official GitHub asset SHA256 verified: ${actual_sha256}"
 
 mkdir -p -- "${install_dir}"
 installed_path="${install_dir}/zhc-installer"
