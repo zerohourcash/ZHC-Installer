@@ -21,7 +21,7 @@ import (
 const defaultInstallerTelemetryURL = "https://wallet.zeroscan.st/feedback"
 const defaultNodeStartupTimeout = 10 * time.Minute
 const defaultNodeStartupPollInterval = 5 * time.Second
-const installerVersion = "0.2.16"
+const installerVersion = "0.2.17"
 const maxNodeDiagnosticTailBytes int64 = 24 * 1024
 
 var errNodeStartupTimeout = errors.New("node startup timeout")
@@ -55,6 +55,7 @@ type installerTelemetryClient struct {
 type installerTelemetryDiagnostics struct {
 	Reason        string               `json:"reason"`
 	Status        string               `json:"status"`
+	Phase         string               `json:"phase,omitempty"`
 	ElapsedMS     int64                `json:"elapsedMs"`
 	BlockHeight   int64                `json:"blockHeight,omitempty"`
 	BestBlockHash string               `json:"bestBlockHash,omitempty"`
@@ -62,6 +63,31 @@ type installerTelemetryDiagnostics struct {
 	RPCMethod     string               `json:"rpcMethod,omitempty"`
 	Error         string               `json:"error,omitempty"`
 	Logs          []nodeDiagnosticFile `json:"logs,omitempty"`
+}
+
+type installerRunTelemetry struct {
+	StartedAt         time.Time
+	DataDir           string
+	Phase             string
+	TelemetryDisabled bool
+}
+
+var installerTelemetrySender = sendInstallerTelemetry
+var installerDiagnosticDirectoryResolver = installerDiagnosticDirectory
+
+func installerTelemetryOptOutRequested(args []string) bool {
+	for _, argument := range args {
+		name, value, hasValue := strings.Cut(strings.TrimSpace(argument), "=")
+		if name != "-no-install-telemetry" && name != "--no-install-telemetry" {
+			continue
+		}
+		if !hasValue {
+			return true
+		}
+		disabled, err := strconv.ParseBool(value)
+		return err == nil && disabled
+	}
+	return false
 }
 
 type installerTelemetryPayload struct {
@@ -315,6 +341,63 @@ func newInstallerTelemetryPayload(status string, elapsed time.Duration, readines
 			Error:         errorText,
 			Logs:          logs,
 		},
+	}
+}
+
+func newInstallerFailureTelemetryPayload(phase string, elapsed time.Duration, installErr error, logs []nodeDiagnosticFile) installerTelemetryPayload {
+	status := "failure"
+	if errors.Is(installErr, errNodeStartupTimeout) {
+		status = "timeout"
+	}
+	payload := newInstallerTelemetryPayload(status, elapsed, nodeReadiness{}, installErr, logs)
+	payload.Diagnostics.Phase = sanitizeDiagnosticText(strings.TrimSpace(phase))
+	if status != "timeout" {
+		payload.Message = "zhc_installer: installation failed"
+		if payload.Diagnostics.Phase != "" {
+			payload.Message += " during " + payload.Diagnostics.Phase
+		}
+	}
+	return payload
+}
+
+func installerPhaseIncludesNodeLogs(phase string) bool {
+	switch strings.TrimSpace(phase) {
+	case "node_start", "node_readiness":
+		return true
+	default:
+		return false
+	}
+}
+
+func (state installerRunTelemetry) reportFailure(installErr error) {
+	if installErr == nil {
+		return
+	}
+	logs := []nodeDiagnosticFile(nil)
+	if state.DataDir != "" && installerPhaseIncludesNodeLogs(state.Phase) {
+		logs = collectNodeDiagnostics(state.DataDir)
+	}
+	payload := newInstallerFailureTelemetryPayload(state.Phase, time.Since(state.StartedAt), installErr, logs)
+	diagnosticDir, diagnosticDirErr := installerDiagnosticDirectoryResolver()
+	if diagnosticDirErr != nil {
+		diagnosticDir = os.TempDir()
+	}
+	reportPath, reportErr := writeInstallerDiagnosticReport(diagnosticDir, payload)
+	if reportErr != nil {
+		fmt.Println("WARNING: could not save local installer diagnostics:", reportErr)
+	} else {
+		fmt.Println("Saved sanitized installer diagnostics:", reportPath)
+	}
+	if state.TelemetryDisabled {
+		return
+	}
+	telemetryCtx, telemetryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	telemetryErr := installerTelemetrySender(telemetryCtx, defaultInstallerTelemetryURL, payload)
+	telemetryCancel()
+	if telemetryErr != nil {
+		fmt.Println("WARNING: installer diagnostics could not be delivered to wallet.zeroscan.st:", telemetryErr)
+	} else {
+		fmt.Println("Sanitized installer diagnostics were sent through wallet.zeroscan.st for administrator review.")
 	}
 }
 

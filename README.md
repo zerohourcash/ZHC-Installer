@@ -415,9 +415,11 @@ The installer does not treat process creation as a successful startup. After lau
 
 When RPC becomes ready, the installer sends a small success event through the same HTTPS feedback channel used by ZHC Wallet PWA: `https://wallet.zeroscan.st/feedback`. The administrator receives a Telegram message containing installer version, OS/architecture, startup time, height, peer count, and best block hash.
 
-If RPC is still unavailable after 10 minutes, the installer:
+Every ordinary error returned during installation is reported through the same channel, not only a node startup timeout. The report identifies the failed phase, including environment and source configuration, stopping the old node, directory preparation, configuration backup/restore, Snapshot verification/download/cleanup/extraction/layout verification, node configuration/download/start, and RPC readiness. One top-level handler sends at most one failure event for an installation run, so node startup errors are not duplicated.
 
-1. reads only the tail of `debug.log` and `vm.log` (at most 24 KiB from each);
+For any installation failure, the installer stores a private sanitized JSON report. If RPC is still unavailable after 10 minutes or the node fails during start, the report additionally includes bounded node logs. Specifically, the installer:
+
+1. reads only the tail of `debug.log` and `vm.log` for node start/readiness failures (at most 24 KiB from each); earlier failures do not attach potentially stale node logs;
 2. removes RPC credentials, passwords, tokens, private-key markers, WIF values, and the local home path;
 3. stores a private JSON report under the platform user configuration directory in `ZHCASH-Installer/diagnostics`;
 4. sends the same sanitized report to `https://wallet.zeroscan.st/feedback` for server logging and a Telegram alert;

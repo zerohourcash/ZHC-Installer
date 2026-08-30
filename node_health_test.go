@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -178,5 +179,130 @@ func TestOfficialInstallerTelemetryRejectsNonOfficialEndpoint(t *testing.T) {
 	}
 	if err := sendInstallerTelemetry(context.Background(), "https://example.com/feedback", payload); err == nil {
 		t.Fatal("non-official telemetry endpoint must be rejected")
+	}
+}
+
+func TestInstallerRunFailureReportsEarlyPhaseAndRedactsSecrets(t *testing.T) {
+	diagnosticDir := t.TempDir()
+	originalSender := installerTelemetrySender
+	originalResolver := installerDiagnosticDirectoryResolver
+	defer func() {
+		installerTelemetrySender = originalSender
+		installerDiagnosticDirectoryResolver = originalResolver
+	}()
+	installerDiagnosticDirectoryResolver = func() (string, error) {
+		return diagnosticDir, nil
+	}
+	var received installerTelemetryPayload
+	var sendCalls atomic.Int32
+	installerTelemetrySender = func(_ context.Context, endpoint string, payload installerTelemetryPayload) error {
+		if endpoint != defaultInstallerTelemetryURL {
+			t.Fatalf("unexpected telemetry endpoint: %s", endpoint)
+		}
+		sendCalls.Add(1)
+		received = payload
+		return nil
+	}
+
+	dataDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "debug.log"),
+		[]byte("old node log rpcpassword=do-not-send"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	state := installerRunTelemetry{
+		StartedAt: time.Now().Add(-2 * time.Second),
+		DataDir:   dataDir,
+		Phase:     "snapshot_download",
+	}
+	state.reportFailure(errors.New("mirror failed token=private-value"))
+
+	if sendCalls.Load() != 1 {
+		t.Fatalf("expected one telemetry call, got %d", sendCalls.Load())
+	}
+	if received.Diagnostics.Reason != "zhc_installer_failure" || received.Diagnostics.Phase != "snapshot_download" {
+		t.Fatalf("unexpected early failure payload: %#v", received)
+	}
+	if strings.Contains(received.Diagnostics.Error, "private-value") || !strings.Contains(received.Diagnostics.Error, "token=<redacted>") {
+		t.Fatalf("installer error was not redacted: %q", received.Diagnostics.Error)
+	}
+	if len(received.Diagnostics.Logs) != 0 {
+		t.Fatalf("stale node logs must not accompany an early installer failure: %#v", received.Diagnostics.Logs)
+	}
+	reports, err := filepath.Glob(filepath.Join(diagnosticDir, "zhc-installer-diagnostics-*.json"))
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("expected one local diagnostic report, reports=%v err=%v", reports, err)
+	}
+	content, err := os.ReadFile(reports[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "private-value") || !strings.Contains(string(content), "snapshot_download") {
+		t.Fatalf("unexpected diagnostic report: %s", content)
+	}
+}
+
+func TestInstallerRunFailureHonorsTelemetryOptOut(t *testing.T) {
+	diagnosticDir := t.TempDir()
+	originalSender := installerTelemetrySender
+	originalResolver := installerDiagnosticDirectoryResolver
+	defer func() {
+		installerTelemetrySender = originalSender
+		installerDiagnosticDirectoryResolver = originalResolver
+	}()
+	installerDiagnosticDirectoryResolver = func() (string, error) {
+		return diagnosticDir, nil
+	}
+	var sendCalls atomic.Int32
+	installerTelemetrySender = func(context.Context, string, installerTelemetryPayload) error {
+		sendCalls.Add(1)
+		return nil
+	}
+
+	state := installerRunTelemetry{
+		StartedAt:         time.Now(),
+		Phase:             "node_configuration",
+		TelemetryDisabled: true,
+	}
+	state.reportFailure(errors.New("configuration failed"))
+	if sendCalls.Load() != 0 {
+		t.Fatalf("telemetry opt-out was ignored: %d calls", sendCalls.Load())
+	}
+	reports, err := filepath.Glob(filepath.Join(diagnosticDir, "zhc-installer-diagnostics-*.json"))
+	if err != nil || len(reports) != 1 {
+		t.Fatalf("opt-out must still keep one local report, reports=%v err=%v", reports, err)
+	}
+}
+
+func TestInstallerRunTimeoutIncludesNodeDiagnostics(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "debug.log"), []byte("Loading block index\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := newInstallerFailureTelemetryPayload(
+		"node_readiness",
+		10*time.Minute,
+		fmt.Errorf("%w: local RPC unavailable", errNodeStartupTimeout),
+		collectNodeDiagnostics(dataDir),
+	)
+	if payload.Diagnostics.Reason != "zhc_installer_timeout" || payload.Diagnostics.Phase != "node_readiness" {
+		t.Fatalf("unexpected timeout payload: %#v", payload)
+	}
+	if len(payload.Diagnostics.Logs) != 1 || !strings.Contains(payload.Diagnostics.Logs[0].Tail, "Loading block index") {
+		t.Fatalf("node timeout diagnostics are missing: %#v", payload.Diagnostics.Logs)
+	}
+}
+
+func TestInstallerTelemetryOptOutIsKnownBeforeFlagParsing(t *testing.T) {
+	if !installerTelemetryOptOutRequested([]string{"--no-install-telemetry"}) {
+		t.Fatal("boolean telemetry opt-out was not detected")
+	}
+	if !installerTelemetryOptOutRequested([]string{"-no-install-telemetry=true"}) {
+		t.Fatal("explicit telemetry opt-out was not detected")
+	}
+	if installerTelemetryOptOutRequested([]string{"--no-install-telemetry=false"}) {
+		t.Fatal("explicit false must not disable telemetry")
 	}
 }
