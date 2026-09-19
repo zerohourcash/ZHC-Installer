@@ -504,7 +504,30 @@ ZHCASH_DATA_DIR=~/Library/Application Support/ZHCASH
 ZHCASH_NODE_DIR=<installer directory>
 ```
 
-On Windows the variables are persisted with `setx`. On Linux they are written to `~/.zhcash-env` and sourced from `~/.profile`. On macOS they are written to `~/.zhcash-env` and sourced from `~/.zprofile`.
+On Windows the variables are persisted with `setx`. On Linux they are written to `~/.zhcash-env` and sourced from `~/.profile`. On macOS they are written to `~/Library/Application Support/ZHCASH/zhcash-env` (the standard macOS data location; older releases used `~/.zhcash-env`, which remains sourced from `~/.zprofile` when present) and sourced from `~/.zprofile`.
+
+## Uninstall
+
+The installer doubles as the uninstaller:
+
+```bash
+zhc-installer --uninstall
+```
+
+This stops and removes everything the desktop stack installs:
+
+- `st.zeroscash.*` LaunchAgents (installer, node, zhp2pproxy) and their plists on macOS, or the `zerohourd.service` systemd unit on Linux
+- running `zerohourd`, `zhp2pproxy`, and installer processes
+- `~/Library/Application Support/ZHCServices` (node binaries, bundled installer, zhp2pproxy, logs) on macOS
+- the persisted environment file (`zhcash-env` / `~/.zhcash-env`) and the profile source line
+
+By default the blockchain data directory (including the wallet) is preserved. Add `--purge-data` to remove it as well:
+
+```bash
+zhc-installer --uninstall --purge-data
+```
+
+Deletion is refused for paths outside the user's home directory.
 
 ## Wallet safety
 

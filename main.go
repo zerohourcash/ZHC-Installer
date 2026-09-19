@@ -131,10 +131,16 @@ func run() (runErr error) {
 	}
 	dataDir := flag.String("datadir", defaultDatadir, "ZHCASH data directory")
 	nodeDir := flag.String("node-dir", defaultNodedir, "node release install/download directory")
+	uninstall := flag.Bool("uninstall", false, "remove ZHCASH services, binaries, and configuration")
+	purgeData := flag.Bool("purge-data", false, "with --uninstall: also remove the blockchain data directory")
 	flag.Parse()
 	waitAtExit = *waitOnExit && !*noWaitOnExit
 	runTelemetry.DataDir = *dataDir
 	runTelemetry.TelemetryDisabled = *noInstallTelemetry
+
+	if *uninstall {
+		return runUninstall(runtime.GOOS, env, *dataDir, *purgeData)
+	}
 
 	runTelemetry.Phase = "environment_configuration"
 	_ = os.Remove(filepath.Join(*dataDir, ".install-complete"))
@@ -465,6 +471,225 @@ func isAnyNodeRunning(goos string) (bool, error) {
 	return false, nil
 }
 
+// runUninstall removes everything the ZHCASH desktop stack installs on this
+// machine: launchd/systemd services, LaunchAgents plists, the services
+// directory (node binaries, installer, zhp2pproxy, logs), and the persisted
+// environment file. With purgeData it also removes the blockchain data
+// directory.
+func runUninstall(goos string, env map[string]string, dataDir string, purgeData bool) error {
+	fmt.Println()
+	fmt.Println("ZHCASH Uninstaller")
+	fmt.Println("OS:", goos+"/"+runtime.GOARCH)
+	fmt.Println("Data directory:", dataDir)
+
+	switch goos {
+	case "darwin":
+		if err := uninstallDarwinLaunchd(); err != nil {
+			return err
+		}
+		if err := uninstallDarwinServicesDir(); err != nil {
+			return err
+		}
+	case "linux":
+		if err := uninstallLinuxSystemd(); err != nil {
+			return err
+		}
+	}
+
+	for _, name := range append(nodeProcessNames(goos), "zhp2pproxy", "zhc-installer") {
+		running, err := isProcessRunning(goos, name)
+		if err != nil {
+			fmt.Printf("Warning: could not check process %s: %v\n", name, err)
+			continue
+		}
+		if !running {
+			continue
+		}
+		fmt.Println("Stopping process:", name)
+		if err := terminateProcess(goos, name); err != nil {
+			fmt.Printf("Warning: %v\n", err)
+		}
+	}
+
+	if err := removeUserEnvironmentFile(goos, env, dataDir); err != nil {
+		return err
+	}
+
+	if purgeData {
+		fmt.Println("Purging blockchain data directory:", dataDir)
+		if err := safeRemoveAll(dataDir); err != nil {
+			return err
+		}
+		fmt.Println("Removed:", dataDir)
+	} else {
+		fmt.Println("Blockchain data kept:", dataDir)
+		fmt.Println("Re-run with --purge-data to remove it.")
+	}
+
+	fmt.Println()
+	fmt.Println("ZHCASH uninstall complete.")
+	return nil
+}
+
+// uninstallDarwinLaunchd bootouts and removes every st.zeroscash.* LaunchAgent
+// created by the desktop wallet (installer, node, zhp2pproxy).
+func uninstallDarwinLaunchd() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	agentsDir := filepath.Join(home, "Library", "LaunchAgents")
+	entries, err := os.ReadDir(agentsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	uid := os.Getuid()
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "st.zeroscash.") || !strings.HasSuffix(name, ".plist") {
+			continue
+		}
+		label := strings.TrimSuffix(name, ".plist")
+		target := fmt.Sprintf("gui/%d/%s", uid, label)
+		fmt.Println("Removing LaunchAgent:", label)
+		if output, err := exec.Command("launchctl", "bootout", target).CombinedOutput(); err != nil {
+			fmt.Printf("Warning: bootout %s: %s\n", target, strings.TrimSpace(string(output)))
+		}
+		if err := os.Remove(filepath.Join(agentsDir, name)); err != nil {
+			return fmt.Errorf("remove %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// uninstallDarwinServicesDir removes ~/Library/Application Support/ZHCServices
+// (node binaries, bundled installer, zhp2pproxy, logs) created by the wallet.
+func uninstallDarwinServicesDir() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	services := filepath.Join(home, "Library", "Application Support", "ZHCServices")
+	if _, err := os.Stat(services); os.IsNotExist(err) {
+		return nil
+	}
+	fmt.Println("Removing services directory:", services)
+	return safeRemoveAll(services)
+}
+
+func uninstallLinuxSystemd() error {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return nil
+	}
+	unit := "zerohourd.service"
+	_ = exec.Command("systemctl", "--user", "stop", unit).Run()
+	_ = exec.Command("systemctl", "--user", "disable", unit).Run()
+	_ = exec.Command("systemctl", "stop", unit).Run()
+	_ = exec.Command("systemctl", "disable", unit).Run()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".config", "systemd", "user", unit),
+		filepath.Join(home, ".config", "systemd", "user", "zerohourd.service"),
+		filepath.Join("/etc", "systemd", "system", unit),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			fmt.Println("Removing systemd unit:", path)
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("remove %s: %w", path, err)
+			}
+		}
+	}
+	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	_ = exec.Command("systemctl", "daemon-reload").Run()
+	return nil
+}
+
+// removeUserEnvironmentFile deletes the persisted ZHCASH environment file in
+// its current and legacy locations and drops the profile source line.
+func removeUserEnvironmentFile(goos string, env map[string]string, dataDir string) error {
+	if goos == "windows" {
+		fmt.Println("Note: remove ZHCASH_DATA_DIR/ZHCASH_NODE_DIR from your user environment manually.")
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	candidates := []string{filepath.Join(home, ".zhcash-env")}
+	if goos == "darwin" && dataDir != "" {
+		candidates = append([]string{filepath.Join(dataDir, "zhcash-env")}, candidates...)
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			fmt.Println("Removing environment file:", path)
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("remove %s: %w", path, err)
+			}
+		}
+	}
+	profile := filepath.Join(home, ".profile")
+	if goos == "darwin" {
+		profile = filepath.Join(home, ".zprofile")
+	}
+	return removeProfileSourceLines(profile, candidates)
+}
+
+func removeProfileSourceLines(profile string, envFiles []string) error {
+	content, err := os.ReadFile(profile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	lines := strings.Split(string(content), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		drop := false
+		for _, envFile := range envFiles {
+			if strings.Contains(line, envFile) && strings.Contains(line, " -f ") {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	output := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	if output != "" {
+		output += "\n"
+	}
+	return os.WriteFile(profile, []byte(output), 0o644)
+}
+
+// safeRemoveAll refuses to delete paths that are missing, empty, root, or not
+// anchored in the user's home directory.
+func safeRemoveAll(path string) error {
+	if path == "" {
+		return errors.New("refusing to remove an empty path")
+	}
+	clean := filepath.Clean(path)
+	if clean == "/" || clean == "." || isDangerousPath(clean) {
+		return fmt.Errorf("refusing to remove unsafe path: %s", path)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	homeClean := filepath.Clean(home)
+	if clean != homeClean && !strings.HasPrefix(clean, homeClean+string(os.PathSeparator)) {
+		return fmt.Errorf("refusing to remove path outside home: %s", path)
+	}
+	return os.RemoveAll(clean)
+}
+
 func isProcessRunning(goos string, name string) (bool, error) {
 	var cmd *exec.Cmd
 	if goos == "windows" {
@@ -682,7 +907,7 @@ func ensureEnvironmentVariables(goos string, env map[string]string, dataDir stri
 		if err := os.Setenv(update.Name, update.Value); err != nil {
 			return err
 		}
-		if err := persistUserEnvironmentVariable(goos, update.Name, update.Value); err != nil {
+		if err := persistUserEnvironmentVariable(goos, update.Name, update.Value, dataDir); err != nil {
 			return err
 		}
 		fmt.Printf("%s=%s\n", update.Name, update.Value)
@@ -690,7 +915,7 @@ func ensureEnvironmentVariables(goos string, env map[string]string, dataDir stri
 	return nil
 }
 
-func persistUserEnvironmentVariable(goos string, name string, value string) error {
+func persistUserEnvironmentVariable(goos string, name string, value string, dataDir string) error {
 	if goos == "windows" {
 		output, err := exec.Command("setx", name, value).CombinedOutput()
 		if err != nil {
@@ -702,7 +927,7 @@ func persistUserEnvironmentVariable(goos string, name string, value string) erro
 	if err != nil {
 		return err
 	}
-	envFile := filepath.Join(home, ".zhcash-env")
+	envFile := userEnvFilePath(goos, home, dataDir)
 	if err := upsertShellExport(envFile, name, value); err != nil {
 		return err
 	}
@@ -711,6 +936,15 @@ func persistUserEnvironmentVariable(goos string, name string, value string) erro
 		profile = filepath.Join(home, ".zprofile")
 	}
 	return ensureProfileSourcesEnvFile(profile, envFile)
+}
+
+// userEnvFilePath keeps the persisted environment inside the standard macOS
+// data location; other Unix-like systems keep the legacy ~/.zhcash-env.
+func userEnvFilePath(goos string, home string, dataDir string) string {
+	if goos == "darwin" && dataDir != "" {
+		return filepath.Join(dataDir, "zhcash-env")
+	}
+	return filepath.Join(home, ".zhcash-env")
 }
 
 func upsertShellExport(path string, name string, value string) error {
