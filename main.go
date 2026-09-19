@@ -137,6 +137,7 @@ func run() (runErr error) {
 	runTelemetry.TelemetryDisabled = *noInstallTelemetry
 
 	runTelemetry.Phase = "environment_configuration"
+	_ = os.Remove(filepath.Join(*dataDir, ".install-complete"))
 	if err := ensureEnvironmentVariables(runtime.GOOS, env, *dataDir, *nodeDir); err != nil {
 		return err
 	}
@@ -251,6 +252,9 @@ func run() (runErr error) {
 		runTelemetry.Phase = "snapshot_layout_verify"
 		if err := verifySnapshotLayout(*dataDir); err != nil {
 			return err
+		}
+		if err := writeInstallCompleteMarker(*dataDir); err != nil {
+			fmt.Println("WARNING: could not write install completion marker:", err)
 		}
 		fmt.Println("Snapshot extracted and verified.")
 		if shouldRemoveSnapshotArchive(*keepSnapshotArchive) {
@@ -1230,6 +1234,12 @@ func downloadSnapshot(ctx context.Context, sources []sourceConfig, dataDir strin
 
 func snapshotPartPath(outputPath string) string {
 	return outputPath + ".part"
+}
+
+func writeInstallCompleteMarker(dataDir string) error {
+	marker := filepath.Join(dataDir, ".install-complete")
+	content := fmt.Sprintf("snapshot installed %s\n", time.Now().UTC().Format(time.RFC3339))
+	return os.WriteFile(marker, []byte(content), 0o644)
 }
 
 func verifySnapshotLayout(dataDir string) error {
