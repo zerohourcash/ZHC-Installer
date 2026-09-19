@@ -80,6 +80,7 @@ type megaFileInfo struct {
 
 func main() {
 	if err := run(); err != nil {
+		emitProgress(progressEvent{Type: "error", Message: sanitizeDiagnosticText(err.Error())})
 		fmt.Fprintf(os.Stderr, "\nERROR: %v\n", err)
 		if waitAtExit {
 			waitForEnter()
@@ -102,6 +103,9 @@ func run() (runErr error) {
 			runTelemetry.reportFailure(runErr)
 		}
 	}()
+	desktop := flag.Bool("macos-app", false, "use bundled macOS Evolution app (ARM64 only)")
+	verifyMacPackage := flag.Bool("verify-macos-package", false, "verify bundled macOS payload without installing or stopping any node")
+	jsonProgress := flag.Bool("progress-json", false, "write JSON progress events to stderr")
 	sourceFlag := flag.String("source", "auto", "download source: auto, yandex, mega, github, or zeroscan")
 	force := flag.Bool("force", false, "delete existing output/partial file and start over")
 	skipNode := flag.Bool("skip-node", false, "skip ZHCASH node release download")
@@ -135,6 +139,26 @@ func run() (runErr error) {
 	purgeData := flag.Bool("purge-data", false, "with --uninstall: also remove the blockchain data directory")
 	flag.Parse()
 	waitAtExit = *waitOnExit && !*noWaitOnExit
+	enableProgressEvents(*jsonProgress)
+	macOSDesktopMode = *desktop
+	desktopNodeDir = *nodeDir
+	if *verifyMacPackage {
+		_, err := verifyPackagedNode()
+		return err
+	}
+	if macOSDesktopMode {
+		if _, err := verifyPackagedNode(); err != nil {
+			return err
+		}
+		if isDangerousPath(*dataDir) || isDangerousPath(*nodeDir) {
+			return errors.New("unsafe installation directory")
+		}
+		unlock, err := lockMacOSInstaller()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	runTelemetry.DataDir = *dataDir
 	runTelemetry.TelemetryDisabled = *noInstallTelemetry
 
@@ -142,13 +166,13 @@ func run() (runErr error) {
 		return runUninstall(runtime.GOOS, env, *dataDir, *purgeData)
 	}
 
-	runTelemetry.Phase = "environment_configuration"
+	runTelemetry.setPhase("environment_configuration")
 	_ = os.Remove(filepath.Join(*dataDir, ".install-complete"))
 	if err := ensureEnvironmentVariables(runtime.GOOS, env, *dataDir, *nodeDir); err != nil {
 		return err
 	}
 
-	runTelemetry.Phase = "source_configuration"
+	runTelemetry.setPhase("source_configuration")
 	sources, err := resolveSources(*sourceFlag)
 	if err != nil {
 		return err
@@ -170,12 +194,12 @@ func run() (runErr error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
 	defer cancel()
 
-	runTelemetry.Phase = "node_stop"
+	runTelemetry.setPhase("node_stop")
 	if err := stopRunningNodes(runtime.GOOS); err != nil {
 		return err
 	}
 
-	runTelemetry.Phase = "directory_prepare"
+	runTelemetry.setPhase("directory_prepare")
 	if *dataDir == "" {
 		return errors.New("data directory is empty; pass --datadir")
 	}
@@ -190,7 +214,7 @@ func run() (runErr error) {
 	}
 
 	if !*skipSnapshot {
-		runTelemetry.Phase = "configuration_backup"
+		runTelemetry.setPhase("configuration_backup")
 		configurationBackups, err := captureConfigurationFiles(*dataDir)
 		if err != nil {
 			return err
@@ -201,15 +225,15 @@ func run() (runErr error) {
 			_ = os.Remove(snapshotPath)
 			_ = os.Remove(snapshotPartPath(snapshotPath))
 		} else {
-			runTelemetry.Phase = "snapshot_verify"
+			runTelemetry.setPhase("snapshot_verify")
 			var err error
 			useExistingSnapshot, err = prepareExistingSnapshotArchive(snapshotPath, snapshotSizeBytes, snapshotSHA256)
 			if err != nil {
 				return err
 			}
 		}
-		if !*noClean {
-			runTelemetry.Phase = "snapshot_cleanup"
+		if !*noClean && !macOSDesktopMode {
+			runTelemetry.setPhase("snapshot_cleanup")
 			fmt.Println()
 			fmt.Println("==> CLEAN BLOCKCHAIN DATA")
 			removed, err := cleanBlockchainData(*dataDir)
@@ -221,7 +245,7 @@ func run() (runErr error) {
 		if useExistingSnapshot {
 			fmt.Println("Using existing verified Snapshot archive:", snapshotPath)
 		} else {
-			runTelemetry.Phase = "snapshot_download"
+			runTelemetry.setPhase("snapshot_download")
 			var err error
 			snapshotPath, err = downloadSnapshot(ctx, sources, *dataDir, false, *idleTimeout, *sourceRetries)
 			if err != nil {
@@ -230,12 +254,17 @@ func run() (runErr error) {
 		}
 		fmt.Println()
 		fmt.Println("==> PREPARE FOR SNAPSHOT EXTRACTION")
-		runTelemetry.Phase = "snapshot_node_stop"
+		if macOSDesktopMode {
+			if err := checkMacOSExtractionSpace(snapshotPath, *dataDir); err != nil {
+				return err
+			}
+		}
+		runTelemetry.setPhase("snapshot_node_stop")
 		if err := stopRunningNodes(runtime.GOOS); err != nil {
 			return err
 		}
 		if !*noClean {
-			runTelemetry.Phase = "snapshot_cleanup"
+			runTelemetry.setPhase("snapshot_cleanup")
 			removed, err := cleanBlockchainData(*dataDir)
 			if err != nil {
 				return err
@@ -245,17 +274,17 @@ func run() (runErr error) {
 		fmt.Println()
 		fmt.Println("==> EXTRACT SNAPSHOT")
 		fmt.Println("Archive:", snapshotPath)
-		runTelemetry.Phase = "snapshot_extract"
+		runTelemetry.setPhase("snapshot_extract")
 		extractErr := extractZipArchive(snapshotPath, *dataDir)
-		runTelemetry.Phase = "configuration_restore"
+		runTelemetry.setPhase("configuration_restore")
 		if err := restoreConfigurationFiles(*dataDir, configurationBackups); err != nil {
 			return err
 		}
 		if extractErr != nil {
-			runTelemetry.Phase = "snapshot_extract"
+			runTelemetry.setPhase("snapshot_extract")
 			return extractErr
 		}
-		runTelemetry.Phase = "snapshot_layout_verify"
+		runTelemetry.setPhase("snapshot_layout_verify")
 		if err := verifySnapshotLayout(*dataDir); err != nil {
 			return err
 		}
@@ -264,7 +293,7 @@ func run() (runErr error) {
 		}
 		fmt.Println("Snapshot extracted and verified.")
 		if shouldRemoveSnapshotArchive(*keepSnapshotArchive) {
-			runTelemetry.Phase = "snapshot_archive_cleanup"
+			runTelemetry.setPhase("snapshot_archive_cleanup")
 			if err := removeSnapshotArchive(snapshotPath); err != nil {
 				return err
 			}
@@ -273,7 +302,7 @@ func run() (runErr error) {
 		}
 	}
 
-	runTelemetry.Phase = "node_configuration"
+	runTelemetry.setPhase("node_configuration")
 	if _, err := configureOptimizedNode(*dataDir); err != nil {
 		return err
 	}
@@ -281,11 +310,11 @@ func run() (runErr error) {
 	if !*skipNode {
 		nodeStartedAt := time.Now()
 		var startErr error
-		runTelemetry.Phase = "node_download"
+		runTelemetry.setPhase("node_download")
 		if err := installNodeRelease(ctx, runtime.GOOS, *nodeDir, *idleTimeout, linuxServer); err != nil {
 			return err
 		}
-		runTelemetry.Phase = "node_start"
+		runTelemetry.setPhase("node_start")
 		if linuxServer {
 			startErr = configureZerohourdSystemd(*dataDir, *nodeDir)
 		} else {
@@ -298,12 +327,13 @@ func run() (runErr error) {
 		fmt.Println()
 		fmt.Println("==> VERIFY ZHCASH NODE STARTUP")
 		fmt.Printf("Waiting up to %s for local RPC readiness. The installer remains responsive while the node initializes.\n", *nodeStartTimeout)
-		runTelemetry.Phase = "node_readiness"
+		runTelemetry.setPhase("node_readiness")
 		ready, readyErr := waitForLocalNodeReady(context.Background(), *dataDir, *nodeStartTimeout, defaultNodeStartupPollInterval, os.Stdout)
 		if readyErr != nil {
 			return readyErr
 		}
 		elapsed := time.Since(nodeStartedAt)
+		emitProgress(progressEvent{Type: "ready", Phase: "node_readiness", Done: ready.BlockHeight, Message: fmt.Sprintf("Height %d · %d peers", ready.BlockHeight, ready.Connections)})
 		fmt.Printf("ZHCASH node is ready: height=%d, connections=%d, best block=%s, startup=%s.\n", ready.BlockHeight, ready.Connections, ready.BestBlockHash, elapsed.Round(time.Second))
 		if !*noInstallTelemetry {
 			payload := newInstallerTelemetryPayload("success", elapsed, ready, nil, nil)
@@ -318,7 +348,8 @@ func run() (runErr error) {
 		}
 	}
 
-	runTelemetry.Phase = "completed"
+	runTelemetry.setPhase("completed")
+	emitProgress(progressEvent{Type: "complete", Phase: "completed"})
 	fmt.Println()
 	fmt.Println("Finished.")
 	return nil
@@ -403,6 +434,11 @@ func isLinuxServer(goos string, env map[string]string) bool {
 }
 
 func stopRunningNodes(goos string) error {
+	if goos == "darwin" && macOSDesktopMode {
+		if err := stopMacOSNodeService(); err != nil {
+			return err
+		}
+	}
 	if err := stopManagedNodeService(goos); err != nil {
 		return err
 	}
@@ -411,6 +447,9 @@ func stopRunningNodes(goos string) error {
 	for _, name := range names {
 		running, err := isProcessRunning(goos, name)
 		if err != nil {
+			if macOSDesktopMode {
+				return err
+			}
 			fmt.Printf("Warning: could not check process %s: %v\n", name, err)
 			continue
 		}
@@ -421,7 +460,11 @@ func stopRunningNodes(goos string) error {
 		if err := terminateProcess(goos, name); err != nil {
 			return err
 		}
-		for i := 0; i < 10; i++ {
+		stopSeconds := 10
+		if goos == "darwin" && macOSDesktopMode {
+			stopSeconds = 60
+		}
+		for i := 0; i < stopSeconds; i++ {
 			time.Sleep(time.Second)
 			stillRunning, err := isProcessRunning(goos, name)
 			if err != nil {
@@ -737,6 +780,9 @@ func startNodeIfNotRunning(goos string, nodeDir string, dataDir string) error {
 	if running {
 		fmt.Println("ZHCASH node is already running; not starting another instance.")
 		return nil
+	}
+	if goos == "darwin" && macOSDesktopMode {
+		return startMacOSApp(context.Background(), nodeDir, dataDir)
 	}
 	executable, err := findNodeExecutable(goos, nodeDir)
 	if err != nil {
@@ -1209,7 +1255,17 @@ func extractZipArchive(zipPath string, destination string) error {
 		return err
 	}
 	defer reader.Close()
-
+	phase := "snapshot_extract"
+	if filepath.Base(zipPath) != defaultOutputName {
+		phase = "node_install"
+	}
+	counter := &byteProgress{phase: phase}
+	for _, item := range reader.File {
+		if !preserveSnapshotTarget(item.Name) && !item.FileInfo().IsDir() {
+			counter.total += int64(item.UncompressedSize64)
+		}
+	}
+	emitProgress(progressEvent{Type: "phase", Phase: phase})
 	for _, item := range reader.File {
 		if preserveSnapshotTarget(item.Name) {
 			continue
@@ -1231,7 +1287,7 @@ func extractZipArchive(zipPath string, destination string) error {
 		if err != nil {
 			return err
 		}
-		if err := writeFileFromReader(target, src, item.FileInfo().Mode()); err != nil {
+		if err := writeFileFromReader(target, io.TeeReader(src, counter), item.FileInfo().Mode()); err != nil {
 			_ = src.Close()
 			return err
 		}
@@ -1589,6 +1645,9 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTi
 		fmt.Println("Linux node release extracted to:", nodeDir)
 		return nil
 	case "darwin":
+		if macOSDesktopMode {
+			return installBundledMacOSNode()
+		}
 		fmt.Println("macOS node package is not available in ZHCASH v1.0.0 yet. Snapshot installation completed; macOS node release will be added later.")
 		return nil
 	default:
@@ -1830,7 +1889,17 @@ func verifySHA256File(path string, expectedHex string) error {
 	}
 	defer file.Close()
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	phase := "package_verify"
+	if filepath.Base(path) == defaultOutputName {
+		phase = "snapshot_verify"
+	}
+	emitProgress(progressEvent{Type: "phase", Phase: phase})
+	counter := &byteProgress{phase: phase, total: info.Size()}
+	if _, err := io.Copy(hash, io.TeeReader(file, counter)); err != nil {
 		return err
 	}
 	got := hex.EncodeToString(hash.Sum(nil))
@@ -2251,6 +2320,7 @@ func (p *progressReader) print(now time.Time) {
 	if elapsed > 0 {
 		speed /= elapsed
 	}
+	emitProgress(progressEvent{Type: "progress", Phase: "snapshot_download", Done: done, Total: p.total, Speed: speed})
 	percent := int64(0)
 	if p.total > 0 {
 		percent = done * 100 / p.total

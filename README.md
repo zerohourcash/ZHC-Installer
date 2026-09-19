@@ -1,5 +1,20 @@
 # ZHC-Installer
 
+## macOS native application
+
+The macOS ARM64 application provides a native SwiftUI cosmic installation UI,
+real snapshot download/hash/extraction progress, and a bundled Evolution 1.0.0
+Qt application installed into `~/Applications`. The existing Go installer still
+downloads and verifies the actual snapshot. Requires macOS 14+ and Apple Silicon.
+See [macOS installation, build and verification](macos/README.md) for package
+details, data preservation, interruption behavior and signing limitations.
+The desktop package is currently ad-hoc signed, not Apple-notarized; full live
+snapshot installation is not claimed by the fixture/regtest verification.
+
+The CLI description below remains applicable to console installation. The
+desktop app passes `--macos-app` to install its bundled macOS node, disables
+telemetry and uses `--progress-json` for structured progress events.
+
 ZHC-Installer is a console installer for bootstrapping a ZHCASH node from a ready blockchain Snapshot.
 
 It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallets, `*.conf` configuration files, and the `zhp2pproxy/` directory, and downloads the matching ZHCASH node release for the current OS.
