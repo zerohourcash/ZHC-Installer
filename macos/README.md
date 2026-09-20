@@ -4,7 +4,7 @@ Native SwiftUI installer for macOS 14+ on Apple Silicon (M1 and newer). The curr
 
 ## Install
 
-1. Download the macOS DMG or application ZIP from the `v0.3.0-macos` release and check its SHA-256 against `SHA256SUMS`.
+1. Download the macOS DMG or application ZIP from the `v0.3.1-macos` release and check its SHA-256 against `SHA256SUMS`.
 2. Open **ZHC Installer.app**. The default build uses a local ad-hoc signature; it is not Apple-notarized. This is disclosed on the release, rather than represented as a Developer ID build.
 3. Read the data replacement checkbox. The installer preserves wallets, wallet backups, `.conf` files and `zhp2pproxy`, but replaces other blockchain/index/cache data.
 4. Press **Начать установку**. The existing Go engine downloads the real pinned snapshot (11,172,882,508 bytes) using its configured mirrors, verifies SHA-256, checks extraction space, extracts it and validates the required layout.
@@ -15,6 +15,14 @@ Blockchain data: `~/Library/Application Support/ZHCASH`. Local installer log: `~
 The snapshot bytes are **not** bundled in the DMG; the node application is. The snapshot is installed by the Go ZHC Installer, not by a simulated UI or an alternate download implementation.
 
 If ZHC Wallet manages the node through `st.zeroscash.zerohourd`, desktop installation boots out that specific LaunchAgent before stopping node processes, keeping its plist. It does not unload the P2P proxy. Node shutdown gets up to 60 seconds to flush databases. Close another wallet/controller that actively restarts the node during installation. Existing LaunchAgent settings are not deleted; they may load again at login.
+
+## Fresh Mac and standard paths
+
+No preconfigured `ZHCASH_DATA_DIR` or `ZHCASH_NODE_DIR` is required. The desktop installer passes absolute paths for `~/Library/Application Support/ZHCASH` (snapshot, node configuration and wallets) and `~/Applications` (Evolution app). It creates the data folder before saving missing variables into `zhcash-env`, and adds an idempotent source entry to `~/.zprofile` for terminal sessions. That environment file survives blockchain cleanup and cannot be overwritten by the snapshot.
+
+Finder does not read shell profiles. Both the initial launch and the installer’s **Open node** action therefore pass `-datadir`, `-server=1` and `-choosedatadir=0` explicitly. Direct Finder launches of Evolution use its built-in standard macOS data directory. No system-wide environment configuration, logout or reboot is needed.
+
+Version 0.3.1 fixes first installation when the data folder does not yet exist. A temporary-home regression test covers absent ZHCASH variables, directory creation, persistence across cleanup and repeat runs without duplicate profile entries. The fix does not move existing wallets or run a live snapshot installation during testing.
 
 ## Progress and interruption
 
@@ -49,7 +57,7 @@ xcrun swiftc -swift-version 5 -parse-as-library macos/Sources/InstallerModel.swi
   macos/Tests/ModelChecks.swift -o /tmp/zhc-installer-model-checks
 /tmp/zhc-installer-model-checks
 codesign --verify --deep --strict 'dist-macos/ZHC Installer.app'
-hdiutil verify dist-macos/ZHC-Installer-0.3.0-macOS-arm64.dmg
+hdiutil verify dist-macos/ZHC-Installer-0.3.1-macOS-arm64.dmg
 ```
 
 Verified during development: existing Go regressions and race checks; JSON byte progress; temporary app installation/replacement and checksum rejection; Swift model stage/error/completion checks; real signed node extraction and version launch; native installer window; Evolution Qt window/RPC/two blocks on an isolated regtest datadir. Full 11.2 GB live snapshot installation over an existing mainnet datadir has not been performed for this release. Legacy encrypted-wallet compatibility and Apple notarization are not established by these checks.

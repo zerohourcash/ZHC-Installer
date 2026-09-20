@@ -100,7 +100,7 @@ If one or both variables are missing, the installer creates them with the resolv
   - `ZHCASH_DATA_DIR=$HOME/Library/Application Support/ZHCASH`
   - `ZHCASH_NODE_DIR=<directory where installer was started>`
 
-On Windows, variables are persisted with `setx`. On Linux/macOS, variables are written to `~/.zhcash-env` and sourced from the user profile file.
+On Windows, variables are persisted with `setx`. On Linux, variables are written to `~/.zhcash-env`. On macOS, they are written to `~/Library/Application Support/ZHCASH/zhcash-env`; the folder is created automatically and the file is sourced from `~/.zprofile`. The desktop app needs no preconfigured ZHCASH variables and passes its standard paths explicitly at launch.
 
 ### 2. Node process check
 

@@ -3,6 +3,9 @@ import Foundation
 @main struct ModelChecks {
     @MainActor static func main() {
         let model = InstallerModel()
+        precondition(model.dataDirectory.path == model.home.appendingPathComponent("Library/Application Support/ZHCASH").path)
+        precondition(model.nodeDirectory.path == model.home.appendingPathComponent("Applications").path)
+        precondition(model.nodeLaunchArguments == ["-datadir=" + model.dataDirectory.path, "-server=1", "-choosedatadir=0"])
         precondition(!model.running && !model.complete)
         model.start()
         precondition(!model.running && model.error == nil, "must require the replacement checkbox")

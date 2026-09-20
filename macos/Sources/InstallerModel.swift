@@ -78,6 +78,12 @@ struct InstallerEvent: Decodable {
             try "".write(to: logURL, atomically: true, encoding: .utf8)
             let p = Process()
             p.executableURL = helper
+            var environment = ProcessInfo.processInfo.environment
+            environment["HOME"] = home.path
+            if environment["PATH", default: ""].isEmpty {
+                environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            }
+            p.environment = environment
             p.arguments = ["--macos-app", "--progress-json", "--no-wait-on-exit", "--no-install-telemetry", "--datadir", dataDirectory.path, "--node-dir", nodeDirectory.path]
             if keepArchive { p.arguments?.append("--keep-snapshot-archive") }
             let output = Pipe(), events = Pipe()
@@ -149,6 +155,17 @@ struct InstallerEvent: Decodable {
         }
     }
     func cancel() { guard running else { return }; cancelling = true; process?.terminate() }
-    func openNode() { NSWorkspace.shared.open(installedApp) }
+    var nodeLaunchArguments: [String] {
+        ["-datadir=" + dataDirectory.path, "-server=1", "-choosedatadir=0"]
+    }
+    func openNode() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.arguments = nodeLaunchArguments
+        NSWorkspace.shared.openApplication(at: installedApp, configuration: configuration) { [weak self] _, error in
+            if let error {
+                Task { @MainActor in self?.error = error.localizedDescription }
+            }
+        }
+    }
     func showLog() { NSWorkspace.shared.open(logURL) }
 }

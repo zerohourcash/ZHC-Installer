@@ -974,6 +974,10 @@ func persistUserEnvironmentVariable(goos string, name string, value string, data
 		return err
 	}
 	envFile := userEnvFilePath(goos, home, dataDir)
+	// On a fresh Mac this runs before snapshot preparation creates the datadir.
+	if err := os.MkdirAll(filepath.Dir(envFile), 0o755); err != nil {
+		return err
+	}
 	if err := upsertShellExport(envFile, name, value); err != nil {
 		return err
 	}
@@ -1178,7 +1182,7 @@ func preserveDataEntry(name string, isDir bool) bool {
 	if !isDir && (lower == strings.ToLower(defaultOutputName) || lower == strings.ToLower(defaultOutputName+".part")) {
 		return true
 	}
-	if !isDir && (lower == "wallet.dat" || strings.HasSuffix(lower, ".bak") || strings.HasSuffix(lower, ".conf")) {
+	if !isDir && (lower == "zhcash-env" || lower == "wallet.dat" || strings.HasSuffix(lower, ".bak") || strings.HasSuffix(lower, ".conf")) {
 		return true
 	}
 	if isDir && (lower == "wallet" || lower == "wallets" || lower == "zhp2pproxy") {
@@ -1309,7 +1313,7 @@ func preserveSnapshotTarget(name string) bool {
 	}
 	clean = strings.TrimPrefix(clean, "/")
 	top := strings.ToLower(strings.Split(clean, "/")[0])
-	return top == "wallet.dat" || top == "wallet" || top == "wallets" || top == "zhp2pproxy" ||
+	return top == "zhcash-env" || top == "wallet.dat" || top == "wallet" || top == "wallets" || top == "zhp2pproxy" ||
 		strings.HasSuffix(top, ".bak") || strings.HasSuffix(top, ".conf")
 }
 
