@@ -5,7 +5,7 @@
 The macOS ARM64 application provides a native SwiftUI cosmic installation UI,
 real blockchain data download/hash/extraction progress, and a bundled Evolution 1.0.0
 Qt application installed into `~/Applications`. The existing Go installer still
-downloads and verifies the actual blockchain data. Requires macOS 14+ and Apple Silicon.
+downloads and verifies the actual blockchain data. Requires macOS 26+ and Apple Silicon.
 See [macOS installation, build and verification](macos/README.md) for package
 details, data preservation, interruption behavior and signing limitations.
 The desktop package is currently ad-hoc signed, not Apple-notarized; full live

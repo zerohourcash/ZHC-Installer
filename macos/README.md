@@ -1,10 +1,12 @@
 # ZHC Installer — macOS
 
-Native SwiftUI installer for macOS 14+ on Apple Silicon (M1 and newer). The current package does not support Intel Macs. The node inside is Evolution 1.0.0 Qt, rebuilt from `3f84eeb6` using the existing ARM64 depends prefix.
+Native SwiftUI installer for macOS 26+ on Apple Silicon (M1 and newer). The current package does not support Intel Macs. The node inside is Evolution 1.0.0 Qt, from the `mac-os-build-zrc` branch and `v1.0.0-macos.1` release: graphite styling, larger balance figures, incoming-transfer MP3, and a tightly framed transparent icon. All original Qt wallet screens are retained.
+
+The installer minimum OS follows the embedded node, preventing installation of an application unsupported by the host OS.
 
 ## Install
 
-1. Download the macOS DMG or application ZIP from the `v0.3.2-macos` release and check its SHA-256 against `SHA256SUMS`.
+1. Download the macOS DMG or application ZIP from the `v0.3.3-macos` release and check its SHA-256 against `SHA256SUMS`.
 2. Open **ZHC Installer.app**. The default build uses a local ad-hoc signature; it is not Apple-notarized. This is disclosed on the release, rather than represented as a Developer ID build.
 3. Read the data replacement checkbox. The installer preserves wallets, wallet backups, `.conf` files and `zhp2pproxy`, but replaces other blockchain/index/cache data.
 4. Press **Начать установку**. The existing Go engine downloads the real pinned blockchain data (11,172,882,508 bytes) using its configured mirrors, verifies SHA-256, checks extraction space, extracts it and validates the required layout.
@@ -57,7 +59,7 @@ xcrun swiftc -swift-version 5 -parse-as-library macos/Sources/InstallerModel.swi
   macos/Tests/ModelChecks.swift -o /tmp/zhc-installer-model-checks
 /tmp/zhc-installer-model-checks
 codesign --verify --deep --strict 'dist-macos/ZHC Installer.app'
-hdiutil verify dist-macos/ZHC-Installer-0.3.2-macOS-arm64.dmg
+hdiutil verify dist-macos/ZHC-Installer-0.3.3-macOS-arm64.dmg
 ```
 
 Verified during development: existing Go regressions and race checks; JSON byte progress; temporary app installation/replacement and checksum rejection; Swift model stage/error/completion checks; real signed node extraction and version launch; native installer window; Evolution Qt window/RPC/two blocks on an isolated regtest datadir. Full 11.2 GB live blockchain data installation over an existing mainnet datadir has not been performed for this release. Legacy encrypted-wallet compatibility and Apple notarization are not established by these checks.
