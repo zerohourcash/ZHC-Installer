@@ -18,7 +18,7 @@ struct InstallerEvent: Decodable {
     @Published var total: Int64 = 0
     @Published var speed: Double = 0
     @Published var error: String?
-    @Published var detail = "Снапшот сети и приложение Evolution 1.0.0"
+    @Published var detail = "Данные блокчейна и приложение Evolution 1.0.0"
     @Published var log = ""
     @Published var keepArchive = false
     @Published var confirmedReplacement = false
@@ -31,7 +31,7 @@ struct InstallerEvent: Decodable {
     var nodeDirectory: URL { home.appendingPathComponent("Applications") }
     var installedApp: URL { nodeDirectory.appendingPathComponent("ZHCASH Evolution.app") }
     var logURL: URL { home.appendingPathComponent("Library/Logs/ZHC Installer/install.log") }
-    let stages = ["Подготовка", "Снапшот", "Проверка SHA-256", "Распаковка", "Приложение", "Запуск ноды"]
+    let stages = ["Подготовка", "Данные блокчейна", "Проверка SHA-256", "Распаковка", "Приложение", "Запуск ноды"]
     var stageIndex: Int {
         if complete { return 5 }
         switch phase {
@@ -72,7 +72,7 @@ struct InstallerEvent: Decodable {
         do {
             let capacity = try home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
             if let free = capacity.volumeAvailableCapacityForImportantUsage, free < 40_000_000_000 {
-                error = "На диске доступно \(bytes(free)). Освободите минимум 40 ГБ для загрузки и распаковки снапшота."; return
+                error = "На диске доступно \(bytes(free)). Освободите минимум 40 ГБ для загрузки и распаковки данных блокчейна."; return
             }
             try FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try "".write(to: logURL, atomically: true, encoding: .utf8)
@@ -121,7 +121,7 @@ struct InstallerEvent: Decodable {
                     self.running = false; self.process = nil
                     if self.cancelling {
                         self.complete = false
-                        self.error = "Установка остановлена. Не запускайте ноду до повторной успешной установки снапшота. Кошельки и конфигурация сохраняются."
+                        self.error = "Установка остановлена. Не запускайте ноду до повторной успешной установки данных блокчейна. Кошельки и конфигурация сохраняются."
                     } else if p.terminationStatus == 0 && self.receivedCompletion {
                         self.complete = true; self.phase = "completed"
                     } else if self.error == nil {
@@ -135,9 +135,9 @@ struct InstallerEvent: Decodable {
 
     func receive(_ data: Data, isEvents: Bool) {
         if isEvents, let event = try? JSONDecoder().decode(InstallerEvent.self, from: data) {
-            if event.type == "error" { error = event.message; return }
+            if event.type == "error" { error = event.message.map(displayMessage); return }
             if event.type == "complete" { receivedCompletion = true; return }
-            if event.type == "ready" { detail = event.message ?? "RPC ноды готов"; return }
+            if event.type == "ready" { detail = event.message.map(displayMessage) ?? "RPC ноды готов"; return }
             if let newPhase = event.phase {
                 if newPhase != phase { lastStage = stageIndex; done = 0; total = 0; speed = 0 }
                 phase = newPhase
@@ -147,12 +147,16 @@ struct InstallerEvent: Decodable {
         }
         guard var line = String(data: data, encoding: .utf8), !line.isEmpty else { return }
         line = line.replacingOccurrences(of: #"(?i)(rpcpassword|password|secret|token)\s*[=:]\s*\S+"#, with: "$1=<redacted>", options: .regularExpression)
+        line = displayMessage(line)
         log += line + "\n"
         if log.count > 14000 { log = String(log.suffix(14000)) }
         if let handle = try? FileHandle(forWritingTo: logURL) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd(); try? handle.write(contentsOf: Data((line + "\n").utf8))
         }
+    }
+    private func displayMessage(_ text: String) -> String {
+        text.replacingOccurrences(of: #"(?i)\bsnapshot\b"#, with: "данные блокчейна", options: .regularExpression)
     }
     func cancel() { guard running else { return }; cancelling = true; process?.terminate() }
     var nodeLaunchArguments: [String] {

@@ -3,19 +3,19 @@
 ## macOS native application
 
 The macOS ARM64 application provides a native SwiftUI cosmic installation UI,
-real snapshot download/hash/extraction progress, and a bundled Evolution 1.0.0
+real blockchain data download/hash/extraction progress, and a bundled Evolution 1.0.0
 Qt application installed into `~/Applications`. The existing Go installer still
-downloads and verifies the actual snapshot. Requires macOS 14+ and Apple Silicon.
+downloads and verifies the actual blockchain data. Requires macOS 14+ and Apple Silicon.
 See [macOS installation, build and verification](macos/README.md) for package
 details, data preservation, interruption behavior and signing limitations.
 The desktop package is currently ad-hoc signed, not Apple-notarized; full live
-snapshot installation is not claimed by the fixture/regtest verification.
+blockchain data installation is not claimed by the fixture/regtest verification.
 
 The CLI description below remains applicable to console installation. The
 desktop app passes `--macos-app` to install its bundled macOS node, disables
 telemetry and uses `--progress-json` for structured progress events.
 
-ZHC-Installer is a console installer for bootstrapping a ZHCASH node from a ready blockchain Snapshot.
+ZHC-Installer is a console installer for bootstrapping a ZHCASH node from ready blockchain data.
 
 It downloads `zhcash-node-seed.zip`, installs it into the standard ZHCASH data directory, preserves wallets, `*.conf` configuration files, and the `zhp2pproxy/` directory, and downloads the matching ZHCASH node release for the current OS.
 
@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 
 This command downloads the latest official `zhc-installer-linux` release from GitHub, verifies it against the immutable SHA-256 asset digest returned by the official GitHub Releases API, installs it as `/usr/local/bin/zhc-installer`, and starts it with `--no-wait-on-exit`.
 
-The installer stops a running ZHCASH node and replaces old blockchain data with the verified Snapshot while preserving `wallet.dat`, `wallet/`, `wallets/`, `zhp2pproxy/`, `*.bak`, and `*.conf`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
+The installer stops a running ZHCASH node and replaces old blockchain data with the verified blockchain data while preserving `wallet.dat`, `wallet/`, `wallets/`, `zhp2pproxy/`, `*.bak`, and `*.conf`. Read the [Wallet safety](#wallet-safety) section before running it on a node that contains a wallet.
 
 On a Linux desktop, run the same installer without `sudo`:
 
@@ -37,7 +37,7 @@ On a Linux desktop, run the same installer without `sudo`:
 curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | bash
 ```
 
-The desktop command installs the executable as `~/.local/bin/zhc-installer`. Both commands accept the regular installer flags after `bash -s --`. For example, to retain the downloaded Snapshot archive on a server:
+The desktop command installs the executable as `~/.local/bin/zhc-installer`. Both commands accept the regular installer flags after `bash -s --`. For example, to retain the downloaded blockchain data archive on a server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/install.sh | sudo bash -s -- --keep-snapshot-archive
@@ -49,13 +49,13 @@ curl -fsSL https://raw.githubusercontent.com/zerohourcash/ZHC-Installer/main/ins
 2. Creates the data directory if it does not exist.
 3. Checks whether a ZHCASH node process is running.
 4. Stops running `zerohour-qt` or `zerohourd` before changing blockchain data. Short-lived `zerohour-cli` commands are not treated as node processes.
-5. Removes incomplete Snapshot partial files from previous runs.
+5. Removes incomplete blockchain data partial files from previous runs.
 6. Reuses `zhcash-node-seed.zip` if it already exists and passes size + SHA256 verification.
-7. Removes old blockchain data while preserving wallet files, `zhp2pproxy/`, `*.conf`, and a verified Snapshot archive.
+7. Removes old blockchain data while preserving wallet files, `zhp2pproxy/`, `*.conf`, and a verified archive of blockchain data.
 8. Downloads `zhcash-node-seed.zip` into the data directory only when a valid archive is not already present.
 9. Checks again that the node is not running before extraction.
-10. Removes extra data-directory files again while preserving wallet files, `zhp2pproxy/`, `*.conf`, and the downloaded Snapshot archive.
-11. Extracts the Snapshot into the data directory.
+10. Removes extra data-directory files again while preserving wallet files, `zhp2pproxy/`, `*.conf`, and the downloaded blockchain data archive.
+11. Extracts the blockchain data into the data directory.
 12. Verifies that `blocks/` and `chainstate/` exist after extraction.
 13. Deletes `zhcash-node-seed.zip` after successful extraction and verification, unless `--keep-snapshot-archive` is used.
 14. Preserves all existing node settings, secures RPC for local proxy access, enables transaction/address indexes, and tunes bounded performance settings for detected CPU/RAM.
@@ -133,13 +133,13 @@ If `zhcash-node-seed.zip` already exists, the installer does not blindly trust i
 1. exact expected file size;
 2. full SHA256 hash.
 
-If the ZIP is valid, it is reused and no new Snapshot download is performed.
+If the ZIP is valid, it is reused and no new blockchain data download is performed.
 
 If the ZIP is missing, incomplete, too large, or has a wrong SHA256, it is deleted and downloaded again from zero.
 
 ### 4. Blockchain data cleanup
 
-Before extracting the Snapshot, the installer removes old blockchain/index/cache data from `ZHCASH_DATA_DIR`.
+Before extracting the blockchain data, the installer removes old blockchain/index/cache data from `ZHCASH_DATA_DIR`.
 
 It preserves wallet-related files:
 
@@ -152,7 +152,7 @@ zhp2pproxy/
 *.conf
 ```
 
-It also preserves the active verified/downloaded Snapshot archive:
+It also preserves the active verified/downloaded blockchain data archive:
 
 ```text
 zhcash-node-seed.zip
@@ -160,15 +160,15 @@ zhcash-node-seed.zip
 
 This cleanup is performed before download/extraction and again right before extraction. The second check protects against files created while the download was running.
 
-Before cleanup, every regular top-level `*.conf` file is also copied into memory. After Snapshot extraction, the installer verifies the contents and restores a missing or changed configuration file. It prints a warning if no `*.conf` existed before cleanup, because a previously deleted configuration cannot be recovered automatically.
+Before cleanup, every regular top-level `*.conf` file is also copied into memory. After blockchain data extraction, the installer verifies the contents and restores a missing or changed configuration file. It prints a warning if no `*.conf` existed before cleanup, because a previously deleted configuration cannot be recovered automatically.
 
-After each cleanup, the installer prints every file and directory that remains. Only wallets, wallet backups, `zhp2pproxy/`, `*.conf` files, and the active Snapshot archive may remain. If any other top-level entry survives cleanup, the installer stops before extraction and reports its path.
+After each cleanup, the installer prints every file and directory that remains. Only wallets, wallet backups, `zhp2pproxy/`, `*.conf` files, and the active blockchain data archive may remain. If any other top-level entry survives cleanup, the installer stops before extraction and reports its path.
 
 Use `--no-clean` only when you explicitly want to keep existing non-wallet data.
 
-### 5. Snapshot download
+### 5. blockchain data download
 
-If a valid local `zhcash-node-seed.zip` is not available, the installer downloads the Snapshot from mirrors in this order:
+If a valid local `zhcash-node-seed.zip` is not available, the installer downloads the blockchain data from mirrors in this order:
 
 ```text
 Yandex → Mega → GitHub multipart → Zeroscan
@@ -182,13 +182,13 @@ zhcash-node-seed.zip.part
 
 If a mirror stalls or fails, the installer retries it, then switches to the next mirror.
 
-If `.part` is larger than the expected Snapshot size, it is treated as corrupted, deleted, and the download starts again from zero.
+If `.part` is larger than the expected blockchain data size, it is treated as corrupted, deleted, and the download starts again from zero.
 
 GitHub fallback uses 10 parts from release `v0.2.2` and assembles them into the same final ZIP.
 
-### 6. Snapshot verification and extraction
+### 6. blockchain data verification and extraction
 
-After download, the installer verifies the full Snapshot SHA256:
+After download, the installer verifies the full blockchain data SHA256:
 
 ```text
 20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7
@@ -203,7 +203,7 @@ chainstate/
 
 If extraction or verification fails, the installer stops with an error.
 
-### 7. Snapshot ZIP removal or retention
+### 7. blockchain data ZIP removal or retention
 
 By default, after successful extraction and verification, the installer deletes:
 
@@ -221,7 +221,7 @@ If you want to keep the ZIP for reuse or testing, run:
 
 ### 8. Node configuration and proxy integration
 
-The installer updates `ZHCASH_DATA_DIR/zerohour.conf` after the Snapshot is installed. It preserves every unrelated line, existing RPC credentials, staking settings, custom peers, and other operator choices. Before changing an existing file it creates a timestamped owner-only `*.bak` copy. The active config is also restricted to owner read/write permissions.
+The installer updates `ZHCASH_DATA_DIR/zerohour.conf` after the blockchain data is installed. It preserves every unrelated line, existing RPC credentials, staking settings, custom peers, and other operator choices. Before changing an existing file it creates a timestamped owner-only `*.bak` copy. The active config is also restricted to owner read/write permissions.
 
 #### Exact configuration modification sequence
 
@@ -229,9 +229,9 @@ The installer does not replace `zerohour.conf` with a fixed template. It perform
 
 1. Before blockchain cleanup, it reads every regular top-level `*.conf` file from the data directory into memory. This protects `zerohour.conf` and any additional operator configuration files from an archive containing files with the same names.
 2. It stops the running node or systemd service before changing blockchain data.
-3. It removes only recognized blockchain data. Wallets, configuration files, the Snapshot archive, and unrelated operator files are excluded from cleanup.
-4. It extracts the official Snapshot.
-5. Immediately after extraction, it compares every captured `*.conf` file byte-for-byte. A file that is missing or was replaced by the Snapshot is restored from the in-memory copy. This restoration is also attempted if extraction itself fails.
+3. It removes only recognized blockchain data. Wallets, configuration files, the blockchain data archive, and unrelated operator files are excluded from cleanup.
+4. It extracts the official blockchain data.
+5. Immediately after extraction, it compares every captured `*.conf` file byte-for-byte. A file that is missing or was replaced by the blockchain data is restored from the in-memory copy. This restoration is also attempted if extraction itself fails.
 6. It reads the resulting `zerohour.conf`, detects CPU/RAM/disk resources, and calculates the managed values.
 7. It updates active managed assignments in the global scope and in `[main]`. Settings inside `[test]` or other network sections are left untouched.
 8. If a managed key occurs more than once in the active mainnet configuration, every active occurrence is corrected to the same value. This prevents an older duplicate later in the file from overriding the safe value.
@@ -240,7 +240,7 @@ The installer does not replace `zerohour.conf` with a fixed template. It perform
 11. If the resulting content differs, it writes the original bytes to an owner-only backup named like `zerohour.conf.before-installer-YYYYMMDD-HHMMSS.NNNNNNNNN.bak`, then writes the updated active file with mode `0600`.
 12. On a repeated run with the same resources and settings, the operation is idempotent: content is not rewritten and another backup is not created. File permissions are still corrected to `0600` if necessary.
 
-If no local `zerohour.conf` existed before extraction, the installer keeps any unrelated values supplied by the official Snapshot and adds/corrects the managed values. If neither the local data directory nor the Snapshot supplied one, a new private config is created. Other captured `*.conf` files are restored when needed but are not otherwise modified.
+If no local `zerohour.conf` existed before extraction, the installer keeps any unrelated values supplied by the official blockchain data and adds/corrects the managed values. If neither the local data directory nor the blockchain data supplied one, a new private config is created. Other captured `*.conf` files are restored when needed but are not otherwise modified.
 
 Command-line arguments passed directly to `zerohourd` have higher precedence than values in `zerohour.conf`. The safeguards described here therefore apply to the normal installer-created systemd startup; an operator can still explicitly request maintenance with arguments such as `-reindex`.
 
@@ -374,11 +374,11 @@ The current Evolution P2P port is `38100`; legacy `8003`/`3888` ports are not fo
 
 Older configurations may contain `spentindex`, `blockfilterindex`, or `limitfreerelay`. Evolution v1.0.0 does not register these options, so the installer does not add them. Existing lines remain preserved in the config and its backup. Likewise, `whitelistrelay` and `whitelistforcerelay` are boolean options, not IP-address fields; the installer does not create the old invalid `=127.0.0.1` form.
 
-The official Snapshot must contain the required transaction and address indexes. If it does not, the installer does not silently start a long reindex; the node will report the mismatch so that the Snapshot can be corrected or an operator can explicitly perform a one-time rebuild outside the normal installer flow.
+The official blockchain data must contain the required transaction and address indexes. If it does not, the installer does not silently start a long reindex; the node will report the mismatch so that the blockchain data can be corrected or an operator can explicitly perform a one-time rebuild outside the normal installer flow.
 
 ### 9. Node release installation
 
-After Snapshot installation, the installer downloads the ZHCASH Evolution `v1.0.0` node release.
+After blockchain data installation, the installer downloads the ZHCASH Evolution `v1.0.0` node release.
 
 On Windows it extracts only:
 
@@ -404,7 +404,7 @@ For root this is:
 
 The installer treats Linux as GUI mode when desktop-session variables such as `XDG_CURRENT_DESKTOP`, `DESKTOP_SESSION`, `GDMSESSION`, or `WAYLAND_DISPLAY` are present. A plain SSH/X11 `DISPLAY` value by itself does not switch the installer to GUI mode.
 
-On macOS, the Snapshot installation works, but the macOS node package is not available in ZHCASH `v1.0.0` yet.
+On macOS, the blockchain data installation works, but the macOS node package is not available in ZHCASH `v1.0.0` yet.
 
 ### 10. Node start
 
@@ -430,7 +430,7 @@ The installer does not treat process creation as a successful startup. After lau
 
 When RPC becomes ready, the installer sends a small success event through the same HTTPS feedback channel used by ZHC Wallet PWA: `https://wallet.zeroscan.st/feedback`. The administrator receives a Telegram message containing installer version, OS/architecture, startup time, height, peer count, and best block hash.
 
-Every ordinary error returned during installation is reported through the same channel, not only a node startup timeout. The report identifies the failed phase, including environment and source configuration, stopping the old node, directory preparation, configuration backup/restore, Snapshot verification/download/cleanup/extraction/layout verification, node configuration/download/start, and RPC readiness. One top-level handler sends at most one failure event for an installation run, so node startup errors are not duplicated.
+Every ordinary error returned during installation is reported through the same channel, not only a node startup timeout. The report identifies the failed phase, including environment and source configuration, stopping the old node, directory preparation, configuration backup/restore, blockchain data verification/download/cleanup/extraction/layout verification, node configuration/download/start, and RPC readiness. One top-level handler sends at most one failure event for an installation run, so node startup errors are not duplicated.
 
 For any installation failure, the installer stores a private sanitized JSON report. If RPC is still unavailable after 10 minutes or the node fails during start, the report additionally includes bounded node logs. Specifically, the installer:
 
@@ -452,9 +452,9 @@ For scripts, disable this behavior:
 ./zhc-installer-linux --no-wait-on-exit
 ```
 
-## Snapshot archive
+## blockchain data archive
 
-Snapshot file:
+blockchain data file:
 
 ```text
 zhcash-node-seed.zip
@@ -467,7 +467,7 @@ blocks/
 chainstate/
 ```
 
-The Snapshot is a bootstrap seed. The node still verifies local data and syncs the latest blocks from the network.
+The blockchain data is a bootstrap seed. The node still verifies local data and syncs the latest blocks from the network.
 
 ## Default data directories
 
@@ -557,7 +557,7 @@ zhp2pproxy/
 *.conf
 ```
 
-Old blockchain/index/cache files are removed before Snapshot extraction unless `--no-clean` is used. At startup the installer deletes incomplete Snapshot partial files from previous runs:
+Old blockchain/index/cache files are removed before blockchain data extraction unless `--no-clean` is used. At startup the installer deletes incomplete blockchain data partial files from previous runs:
 
 ```text
 zhcash-node-seed.zip.part
@@ -565,17 +565,17 @@ zhcash-node-seed.zip.part
 
 If `zhcash-node-seed.zip` already exists, the installer verifies its expected size and SHA256. A valid archive is reused; an invalid or incomplete archive is deleted and downloaded again.
 
-During cleanup the installer preserves the active verified/downloaded Snapshot archive:
+During cleanup the installer preserves the active verified/downloaded blockchain data archive:
 
 ```text
 zhcash-node-seed.zip
 ```
 
-The installer lists the remaining files and directories after both cleanup passes. Snapshot extraction also refuses to overwrite preserved wallet, backup, `zhp2pproxy/`, or `*.conf` paths. As a second layer of protection, regular `*.conf` files are backed up in memory before cleanup and verified or restored after extraction.
+The installer lists the remaining files and directories after both cleanup passes. blockchain data extraction also refuses to overwrite preserved wallet, backup, `zhp2pproxy/`, or `*.conf` paths. As a second layer of protection, regular `*.conf` files are backed up in memory before cleanup and verified or restored after extraction.
 
 After successful extraction and verification, `zhcash-node-seed.zip` is deleted from the data directory by default. Use `--keep-snapshot-archive` to keep the ZIP after installation.
 
-## Snapshot sources
+## blockchain data sources
 
 Default source order:
 
@@ -591,7 +591,7 @@ zhcash-node-seed.zip.part
 
 If one source fails, stalls, or has no progress for the configured idle timeout, the installer retries that source and then switches to the next mirror while preserving the already downloaded bytes.
 
-Final Snapshot verification:
+Final blockchain data verification:
 
 ```text
 SHA256: 20e9551f7bb35564d5f56b6ec0c908e3d23ba419eb1cc3ad266260c2857ebcf7
@@ -619,7 +619,7 @@ https://zeroscan.io/installer/downloads/zhcash-node-seed.zip
 
 ### GitHub multipart fallback
 
-GitHub Releases cannot store this Snapshot as one file because every release asset must be under 2 GiB. The installer supports the Snapshot split into 10 release assets stored in the data release:
+GitHub Releases cannot store this blockchain data as one file because every release asset must be under 2 GiB. The installer supports the blockchain data split into 10 release assets stored in the data release:
 
 ```text
 https://github.com/zerohourcash/ZHC-Installer/releases/tag/v0.2.2
@@ -631,7 +631,7 @@ zhcash-node-seed.zip.part01
 zhcash-node-seed.zip.part10
 ```
 
-The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256. New installer releases should not duplicate these Snapshot parts unless the Snapshot itself changes.
+The installer downloads these parts into the same shared `zhcash-node-seed.zip.part`, resumes from the already downloaded byte offset, then verifies the final ZIP SHA256. New installer releases should not duplicate these blockchain data parts unless the blockchain data itself changes.
 
 To explicitly override the official Yandex mirror, provide another public-resource URL through:
 
@@ -739,7 +739,7 @@ sudo systemctl daemon-reload
 
 ### macOS
 
-The macOS node package is not available in `v1.0.0` yet. The installer installs the Snapshot and prints a message that the macOS node release will be added later.
+The macOS node package is not available in `v1.0.0` yet. The installer installs the blockchain data and prints a message that the macOS node release will be added later.
 
 ## Downloads
 
@@ -772,13 +772,13 @@ When started without extra flags, the installer:
 3. Stops running ZHCASH node processes before changing blockchain data.
 4. Removes incomplete `zhcash-node-seed.zip.part` files from old runs.
 5. Reuses an existing `zhcash-node-seed.zip` only if size and SHA256 are correct.
-6. Cleans old blockchain data while preserving wallets, `zhp2pproxy/`, `*.conf`, and the active Snapshot ZIP.
-7. Downloads Snapshot from mirrors in order: Yandex, Mega, GitHub multipart, Zeroscan.
+6. Cleans old blockchain data while preserving wallets, `zhp2pproxy/`, `*.conf`, and the active blockchain data ZIP.
+7. Downloads blockchain data from mirrors in order: Yandex, Mega, GitHub multipart, Zeroscan.
 8. Before extraction, checks again that the node is not running.
-9. Cleans the data directory again from extra files, preserving wallets, `zhp2pproxy/`, `*.conf`, and the Snapshot ZIP.
-10. Extracts Snapshot into the ZHCASH data directory.
+9. Cleans the data directory again from extra files, preserving wallets, `zhp2pproxy/`, `*.conf`, and the blockchain data ZIP.
+10. Extracts blockchain data into the ZHCASH data directory.
 11. Verifies that `blocks/` and `chainstate/` exist.
-12. Deletes the Snapshot ZIP unless `--keep-snapshot-archive` is used.
+12. Deletes the blockchain data ZIP unless `--keep-snapshot-archive` is used.
 13. Preserves existing config content, creates a timestamped backup, enables local RPC/address indexes, tunes resource-dependent limits, and adds the local P2P proxy peer.
 14. Downloads and installs the ZHCASH Evolution node release.
 15. Starts the node:
@@ -794,7 +794,7 @@ Default install:
 ./zhc-installer-linux
 ```
 
-Choose Snapshot source:
+Choose blockchain data source:
 
 ```bash
 ./zhc-installer-linux --source auto
@@ -824,7 +824,7 @@ Start downloads from zero:
 ./zhc-installer-linux --force
 ```
 
-Keep Snapshot ZIP after successful extraction:
+Keep blockchain data ZIP after successful extraction:
 
 ```bash
 ./zhc-installer-linux --keep-snapshot-archive

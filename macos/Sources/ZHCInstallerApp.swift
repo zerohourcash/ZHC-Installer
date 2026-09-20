@@ -32,7 +32,7 @@ import AppKit
     }
     private func showStopNotice() {
         let alert = NSAlert(); alert.messageText = "Установка ещё выполняется"
-        alert.informativeText = "Сначала нажмите «Остановить» и дождитесь завершения процесса. После прерывания распаковки потребуется повторная установка снапшота."
+        alert.informativeText = "Сначала нажмите «Остановить» и дождитесь завершения процесса. После прерывания распаковки потребуется повторная установка данных блокчейна."
         alert.addButton(withTitle:"Вернуться к установке"); alert.runModal()
     }
 }
@@ -59,7 +59,7 @@ struct InstallerView: View {
                     .font(.system(size:10,weight:.medium,design:.monospaced)).tracking(2.3).foregroundStyle(cyan)
                 Text(model.title).font(.system(size:model.running ? 37 : 43,weight:.light)).tracking(-1.3)
                     .lineSpacing(3).frame(maxWidth:540,alignment:.leading).padding(.top,18)
-                Text(model.complete ? "Evolution установлен. Нода отвечает по RPC.\nДальнейшая синхронизация продолжается в приложении." : "Полная нода. Проверенный снапшот.\nОдин установщик — от первого байта до запуска.")
+                Text(model.complete ? "Evolution установлен. Нода отвечает по RPC.\nДальнейшая синхронизация продолжается в приложении." : "Полная нода. Проверенные данные блокчейна.\nОдин установщик — от первого байта до запуска.")
                     .font(.system(size:13)).foregroundStyle(.white.opacity(0.6)).lineSpacing(5).padding(.top,18)
                 Spacer()
                 VStack(alignment:.leading,spacing:18) {
@@ -92,14 +92,14 @@ struct InstallerView: View {
                         if model.complete { Text(model.detail).font(.system(size:11,design:.monospaced)).foregroundStyle(cyan) }
                     } else {
                         HStack(spacing:24) {
-                            metric("СНАПШОТ","11,2 ГБ · SHA-256")
+                            metric("ДАННЫЕ БЛОКЧЕЙНА","11,2 ГБ · SHA-256")
                             metric("ПРИЛОЖЕНИЕ","Evolution 1.0.0 Qt")
                             metric("РАЗМЕЩЕНИЕ","~/Applications")
                         }
                         Text("Данные: ~/Library/Application Support/ZHCASH").font(.system(size:10,design:.monospaced)).foregroundStyle(.white.opacity(0.5))
-                        Toggle("Заменить данные блокчейна снапшотом, сохранив кошельки и .conf",isOn:$model.confirmedReplacement)
+                        Toggle("Заменить текущие данные блокчейна, сохранив кошельки и .conf",isOn:$model.confirmedReplacement)
                             .toggleStyle(.checkbox).font(.system(size:11))
-                        Toggle("Сохранить ZIP снапшота после установки",isOn:$model.keepArchive)
+                        Toggle("Сохранить архив данных блокчейна после установки",isOn:$model.keepArchive)
                             .toggleStyle(.checkbox).font(.system(size:11)).foregroundStyle(.white.opacity(0.6))
                     }
                     if let error = model.error {

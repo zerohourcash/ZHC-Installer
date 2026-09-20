@@ -31,7 +31,7 @@ import pathlib,plistlib,sys
 p=pathlib.Path(sys.argv[1])/'Contents/Info.plist'
 p.write_bytes(plistlib.dumps(dict(CFBundleName='ZHC Installer', CFBundleDisplayName='ZHC Installer',
 CFBundleIdentifier='org.zhcash.installer', CFBundleExecutable='ZHCInstaller', CFBundlePackageType='APPL',
-CFBundleShortVersionString='0.3.1', CFBundleVersion='0.3.1', LSMinimumSystemVersion='14.0',
+CFBundleShortVersionString='0.3.2', CFBundleVersion='0.3.2', LSMinimumSystemVersion='14.0',
 LSArchitecturePriority=['arm64'], CFBundleIconFile='Installer.icns', NSHighResolutionCapable=True,
 LSMultipleInstancesProhibited=True)))
 PY
@@ -41,9 +41,9 @@ codesign --verify --deep --strict "$APP"
 # Rebuild only replaces generated deliverables in this output directory.
 if [[ -d "$OUT/ZHC Installer.app" ]]; then rm -rf "$OUT/ZHC Installer.app"; fi
 mv "$APP" "$OUT/ZHC Installer.app"
-ditto -c -k --keepParent "$OUT/ZHC Installer.app" "$OUT/ZHC-Installer-0.3.1-macOS-arm64.zip"
+ditto -c -k --keepParent "$OUT/ZHC Installer.app" "$OUT/ZHC-Installer-0.3.2-macOS-arm64.zip"
 hdiutil create -ov -volname 'ZHC Installer' -srcfolder "$OUT/ZHC Installer.app" \
-  -format UDZO "$OUT/ZHC-Installer-0.3.1-macOS-arm64.dmg"
-(cd "$OUT" && shasum -a 256 ZHC-Installer-0.3.1-macOS-arm64.{dmg,zip} > SHA256SUMS)
+  -format UDZO "$OUT/ZHC-Installer-0.3.2-macOS-arm64.dmg"
+(cd "$OUT" && shasum -a 256 ZHC-Installer-0.3.2-macOS-arm64.{dmg,zip} > SHA256SUMS)
 printf '%s\n' "$DIGEST" > "$OUT/EVOLUTION_PAYLOAD_SHA256"
 echo "Built $OUT. Without ZHC_SIGN_IDENTITY this is an ad-hoc signed build, not notarized."
