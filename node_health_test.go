@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -133,7 +134,8 @@ func TestWriteInstallerDiagnosticReportUsesPrivateDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows uses ACLs; os.FileMode does not expose POSIX permission bits.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("diagnostic report is not private: %o", info.Mode().Perm())
 	}
 	content, err := os.ReadFile(reportPath)

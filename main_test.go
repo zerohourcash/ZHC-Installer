@@ -12,6 +12,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -413,6 +414,9 @@ func TestStopManagedNodeServiceIgnoresMissingSystemctl(t *testing.T) {
 }
 
 func TestStopManagedNodeServiceStopsActiveService(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("systemctl mock requires a Unix shell; covered on Linux and macOS")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "systemctl.log")
 	systemctlPath := filepath.Join(dir, "systemctl")

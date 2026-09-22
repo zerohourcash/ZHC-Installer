@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -117,7 +118,8 @@ func TestUpdateNodeConfigCreatesBackupAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows uses ACLs; os.FileMode does not expose POSIX permission bits.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("configuration permissions are not private: %o", info.Mode().Perm())
 	}
 	second, err := updateNodeConfig(path, settings, []nodeConfigSetting{{Key: "addnode", Value: "127.0.0.1:3890"}}, now.Add(time.Second))
