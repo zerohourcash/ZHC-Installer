@@ -1560,7 +1560,7 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTi
 	fmt.Println("==> INSTALL NODE RELEASE")
 	switch goos {
 	case "windows":
-		tempDir, err := os.MkdirTemp("", "zhcash-node-release-*")
+		tempDir, err := nodeReleaseStagingDir(os.TempDir(), windowsDesktopDirectory)
 		if err != nil {
 			return err
 		}
@@ -1570,7 +1570,7 @@ func installNodeRelease(ctx context.Context, goos string, nodeDir string, idleTi
 		if err := verifiedNodeReleaseDownload(ctx, asset, archive, idleTimeout); err != nil {
 			return err
 		}
-		target, err := extractSingleFileFromZip(archive, "zerohour-qt.exe", nodeDir)
+		target, err := installWindowsNodeArchive(archive, tempDir, nodeDir)
 		if err != nil {
 			return err
 		}

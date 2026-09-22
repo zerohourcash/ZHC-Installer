@@ -855,3 +855,21 @@ GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o z
 ```
 
 Obfuscation prevents casual extraction with tools like `strings`, but it is not a cryptographic secret once a binary is public.
+
+## Windows temporary-folder recovery (v0.2.20)
+
+If the Windows temporary folder is missing or inaccessible (for example an expired
+RDP session directory `%LOCALAPPDATA%\Temp\2`), the installer automatically downloads
+and extracts the node release in a unique `ZHC-Installer-*` folder on the current
+user's Desktop. Windows Known Folders resolves redirected/OneDrive Desktop paths.
+The node executable is then installed in the configured node directory. Only the
+unique staging folder is removed afterward; other Desktop files and blockchain
+data are not moved or deleted by this fallback. If both locations are unavailable,
+the error identifies the failed temporary and Desktop locations.
+
+If blockchain data was already extracted successfully by an earlier run, install
+only the node without downloading the blockchain data again:
+
+```powershell
+.\zhc-installer-windows.exe --skip-snapshot
+```
